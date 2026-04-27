@@ -15,6 +15,50 @@ const SHIFTS = {
   'Idealz Libert Plaza': { showroom:{ start:'10:00', end:'19:00' } },
   'Idealz Prime':        { showroom:{ start:'09:45', end:'19:30' }, backoffice:{ start:'09:30', end:'18:30' } },
 }
+// ── GPS Coordinates for each showroom (50m radius) ──────────────────────────
+const SHOWROOM_LOCATIONS = {
+  'Idealz Marino':       { lat: 6.9044,    lng: 79.8553,   radius: 50 },
+  'Idealz Libert Plaza': { lat: 6.9112649, lng: 79.8515544, radius: 50 },
+  'Idealz Prime':        { lat: 6.8912671, lng: 79.8560789, radius: 50 },
+}
+
+// Haversine formula — distance between two GPS points in meters
+function getDistance(lat1, lng1, lat2, lng2) {
+  const R = 6371000 // Earth radius in meters
+  const dLat = (lat2 - lat1) * Math.PI / 180
+  const dLng = (lng2 - lng1) * Math.PI / 180
+  const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+            Math.cos(lat1 * Math.PI/180) * Math.cos(lat2 * Math.PI/180) *
+            Math.sin(dLng/2) * Math.sin(dLng/2)
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a))
+}
+
+// Returns {allowed: bool, distance: number, message: string}
+function checkInsideShowroom(showroom, userLat, userLng) {
+  const loc = SHOWROOM_LOCATIONS[showroom]
+  if (!loc) return { allowed: true, distance: 0, message: '' }
+  const dist = Math.round(getDistance(loc.lat, loc.lng, userLat, userLng))
+  if (dist <= loc.radius) {
+    return { allowed: true, distance: dist, message: `✅ You are inside ${showroom} (${dist}m)` }
+  }
+  return { allowed: false, distance: dist, message: `❌ You are ${dist}m away from ${showroom}. You must be within 50m to check in.` }
+}
+
+// Get current GPS position as a Promise
+function getCurrentPosition() {
+  return new Promise((resolve, reject) => {
+    if (!navigator.geolocation) {
+      reject(new Error('GPS not supported on this device'))
+      return
+    }
+    navigator.geolocation.getCurrentPosition(
+      pos => resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude, accuracy: pos.coords.accuracy }),
+      err => reject(err),
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+    )
+  })
+}
+
 function getShift(showroom, staffType='showroom') {
   const sh=SHIFTS[showroom]; if(!sh) return {start:'09:00',end:'18:00'}
   return sh[staffType]||sh.showroom
@@ -23,9 +67,18 @@ function today()   { return new Date().toISOString().split('T')[0] }
 function nowTime() { return new Date().toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit',second:'2-digit'}) }
 function initials(name='') { return name.split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase() }
 
-// Biometric via WebAuthn
+// Biometric via WebAuthn — optional, skipped if device has no sensor
+async function checkBiometricAvailable() {
+  try {
+    if (!window.PublicKeyCredential) return false
+    return await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable()
+  } catch { return false }
+}
+
 async function verifyBiometric(empId) {
-  if (!window.PublicKeyCredential) return true
+  const hasBio = await checkBiometricAvailable()
+  if (!hasBio) return true // no sensor on device — PIN only is enough
+
   const challenge = new Uint8Array(32); crypto.getRandomValues(challenge)
   const key = `idealz_cred_${empId}`
   try {
@@ -51,7 +104,7 @@ async function verifyBiometric(empId) {
     return true
   } catch(e) {
     if (e.name==='NotAllowedError') return false
-    return true // fallback allow if device doesn't support
+    return true
   }
 }
 
@@ -84,6 +137,7 @@ export default function Home() {
   const [selRoom, setSelRoom]   = useState('')
   const [log, setLog]           = useState([])
   const [fpOverlay, setFpOv]    = useState(false)
+  const [gpsStatus, setGpsStatus] = useState('') // 'checking' | 'ok' | 'fail'
   const [fpLabel, setFpLabel]   = useState('')
   const [leaveModal, setLeaveM] = useState(false)
   const [leaveEmp, setLeaveEmp] = useState('')
@@ -172,12 +226,42 @@ export default function Home() {
     if (!selRoom) return showToast('Select a showroom first.','error')
     const emp = employees.find(e=>e.id===eid) || employees[0]
     if (!emp) return showToast('Employee not found.','error')
-    // Verify biometric
+
+    // ── Step 1: GPS Location Check ──────────────────────────────────────────
+    setGpsStatus('checking')
+    showToast('📍 Checking your location…','info')
+    try {
+      const pos = await getCurrentPosition()
+      const check = checkInsideShowroom(selRoom, pos.lat, pos.lng)
+      if (!check.allowed) {
+        setGpsStatus('fail')
+        showToast(check.message, 'error')
+        setTimeout(()=>setGpsStatus(''), 3000)
+        return
+      }
+      setGpsStatus('ok')
+    } catch(e) {
+      setGpsStatus('fail')
+      if (e.code === 1) { // Permission denied
+        showToast('❌ Location access denied. Please allow GPS in your browser settings.','error')
+      } else if (e.code === 2) {
+        showToast('❌ GPS signal not available. Try moving near a window.','error')
+      } else {
+        showToast('❌ Could not get your location. Please try again.','error')
+      }
+      setTimeout(()=>setGpsStatus(''), 3000)
+      return
+    }
+
+    // ── Step 2: Face ID / Biometric ─────────────────────────────────────────
     setFpLabel(type==='arrive'?`Verifying arrival — ${emp.name}`:`Verifying departure — ${emp.name}`)
     setFpOv(true)
     const ok = await verifyBiometric(emp.empId)
     setFpOv(false)
+    setGpsStatus('')
     if (!ok) return showToast('Face ID / fingerprint did not match.','error')
+
+    // ── Step 3: Save record ──────────────────────────────────────────────────
     const rec={empId:emp.empId,empName:emp.name,showroom:selRoom,type,date:today(),time:nowTime(),reason:'',duration:0}
     await addDoc(collection(db,'records'),{...rec,createdAt:Date.now()})
     setLog(p=>[{...rec,id:Date.now()},...p])
@@ -191,9 +275,31 @@ export default function Home() {
     if (!selRoom) return showToast('Select a showroom first.','error')
     const emp = employees.find(e=>e.id===eid)||employees[0]
     if (!emp) return
+
+    // GPS check
+    setGpsStatus('checking')
+    showToast('📍 Checking your location…','info')
+    try {
+      const pos = await getCurrentPosition()
+      const check = checkInsideShowroom(selRoom, pos.lat, pos.lng)
+      if (!check.allowed) {
+        setGpsStatus('fail')
+        showToast(check.message,'error')
+        setTimeout(()=>setGpsStatus(''),3000)
+        return
+      }
+      setGpsStatus('ok')
+    } catch(e) {
+      setGpsStatus('fail')
+      showToast('❌ Could not get your location. Please allow GPS access.','error')
+      setTimeout(()=>setGpsStatus(''),3000)
+      return
+    }
+
     setFpLabel(`Short leave — ${emp.name}`); setFpOv(true)
     const ok = await verifyBiometric(emp.empId)
     setFpOv(false)
+    setGpsStatus('')
     if (!ok) return showToast('Face ID / fingerprint did not match.','error')
     const rec={empId:emp.empId,empName:emp.name,showroom:selRoom,type:'leave',date:today(),time:nowTime(),reason:leaveReason||'Short leave',duration:parseInt(leaveDur)}
     await addDoc(collection(db,'records'),{...rec,createdAt:Date.now()})
@@ -341,6 +447,20 @@ export default function Home() {
             )
           })}
         </div>
+
+        {/* GPS Status Bar */}
+        {gpsStatus && (
+          <div style={{
+            marginBottom:16, padding:'10px 16px', borderRadius:10,
+            background: gpsStatus==='checking'?'rgba(108,99,255,0.1)': gpsStatus==='ok'?'rgba(67,233,123,0.1)':'rgba(255,101,132,0.1)',
+            border: `1px solid ${gpsStatus==='checking'?'rgba(108,99,255,0.3)':gpsStatus==='ok'?'rgba(67,233,123,0.3)':'rgba(255,101,132,0.3)'}`,
+            display:'flex', alignItems:'center', gap:10, fontSize:'0.82rem',
+            color: gpsStatus==='checking'?'var(--accent)':gpsStatus==='ok'?'var(--accent3)':'var(--accent2)'
+          }}>
+            <span style={{fontSize:'1.1rem'}}>{gpsStatus==='checking'?'📍':gpsStatus==='ok'?'✅':'❌'}</span>
+            <span>{gpsStatus==='checking'?'Getting your GPS location…':gpsStatus==='ok'?'Location verified — you are at the showroom':'Location check failed'}</span>
+          </div>
+        )}
 
         <div className="action-grid" style={S.grid2}>
           <div className="card-pad" style={S.card}>

@@ -6,57 +6,59 @@ import { collection, getDocs, query, where } from 'firebase/firestore'
 import { saveSession, getSession } from '../lib/auth'
 
 // ── WebAuthn / Face ID ────────────────────────────────────────────────────────
+async function checkBiometricAvailable() {
+  try {
+    if (!window.PublicKeyCredential) return false
+    const available = await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable()
+    return available
+  } catch { return false }
+}
+
 async function verifyBiometric(empId) {
-  if (!window.PublicKeyCredential) return true // fallback: skip if not supported
+  // Check if device actually has biometrics available
+  const hasBiometric = await checkBiometricAvailable()
+  if (!hasBiometric) {
+    // Device has no Face ID / fingerprint — PIN only is fine
+    return true
+  }
+
   const challenge = new Uint8Array(32)
   crypto.getRandomValues(challenge)
   const storageKey = `idealz_cred_${empId}`
 
   try {
     const existing = localStorage.getItem(storageKey)
-
     if (existing) {
-      // Try to authenticate with stored credential
       const credId = Uint8Array.from(atob(existing), c => c.charCodeAt(0))
       await navigator.credentials.get({
         publicKey: {
-          challenge,
-          timeout: 30000,
-          userVerification: 'required', // forces Face ID / fingerprint
+          challenge, timeout: 30000,
+          userVerification: 'required',
           rpId: location.hostname,
           allowCredentials: [{ type: 'public-key', id: credId }],
         }
       })
     } else {
-      // First time: register this employee's biometric on this device
       const cred = await navigator.credentials.create({
         publicKey: {
           challenge,
           rp: { name: 'Idealz Attendance', id: location.hostname },
-          user: {
-            id: new TextEncoder().encode(empId),
-            name: empId,
-            displayName: empId,
-          },
+          user: { id: new TextEncoder().encode(empId), name: empId, displayName: empId },
           pubKeyCredParams: [{ type: 'public-key', alg: -7 }, { type: 'public-key', alg: -257 }],
           timeout: 30000,
           authenticatorSelection: {
-            authenticatorAttachment: 'platform', // use device Face ID / fingerprint
+            authenticatorAttachment: 'platform',
             userVerification: 'required',
             residentKey: 'preferred',
           },
         }
       })
-      // Store credential ID for future logins
-      const credIdB64 = btoa(String.fromCharCode(...new Uint8Array(cred.rawId)))
-      localStorage.setItem(storageKey, credIdB64)
+      localStorage.setItem(storageKey, btoa(String.fromCharCode(...new Uint8Array(cred.rawId))))
     }
     return true
   } catch (e) {
-    if (e.name === 'NotAllowedError') return false // user cancelled / face didn't match
-    // Device doesn't support or no biometric enrolled — allow PIN-only as fallback
-    console.warn('Biometric not available, using PIN only:', e.message)
-    return true
+    if (e.name === 'NotAllowedError') return false // user cancelled or face didn't match
+    return true // any other error = skip biometric, allow PIN only
   }
 }
 
