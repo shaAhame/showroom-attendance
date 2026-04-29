@@ -5,21 +5,21 @@ import { db } from '../lib/firebase'
 import { collection, getDocs, addDoc, deleteDoc, doc, query, orderBy, where, updateDoc } from 'firebase/firestore'
 import { getSession, clearSession, canViewReports, canManageEmployees, canViewAnalytics, getAllowedShowroom } from '../lib/auth'
 
-const SHOWROOMS = ['Idealz Marino', 'Idealz Libert Plaza', 'Idealz Prime']
+const SHOWROOMS = ['Idealz Marino', 'Idealz Liberty Plaza', 'Idealz Prime']
 const ICONS     = ['🏛️','🏬','🏪']
 const COLORS    = ['#6c63ff','#ff6584','#43e97b','#f7c948','#38b6ff','#ff9a4a','#a78bfa','#34d399']
 const ROLES     = ['employee','manager','admin']
 const ROLE_LABELS = { employee:'Employee', manager:'Manager', admin:'Admin / HR', backoffice:'Back Office' }
 const SHIFTS = {
   'Idealz Marino':       { showroom:{ start:'10:00', end:'20:00' } },
-  'Idealz Libert Plaza': { showroom:{ start:'10:00', end:'19:00' } },
+  'Idealz Liberty Plaza': { showroom:{ start:'10:00', end:'19:00' } },
   'Idealz Prime':        { showroom:{ start:'09:45', end:'19:30' }, backoffice:{ start:'09:30', end:'18:30' } },
 }
 // ── GPS Coordinates for each showroom ────────────────────────────────────────
 // Radius is 150m because indoor mall GPS can drift 50-100m
 const SHOWROOM_LOCATIONS = {
   'Idealz Marino':       { lat: 6.900183,  lng: 79.852234,  radius: 50 },
-  'Idealz Libert Plaza': { lat: 6.911688,  lng: 79.851517,  radius: 50 },
+  'Idealz Liberty Plaza': { lat: 6.911688,  lng: 79.851517,  radius: 50 },
   'Idealz Prime':        { lat: 6.8912695, lng: 79.8560961, radius: 50 },
 }
 
