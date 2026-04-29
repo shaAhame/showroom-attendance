@@ -433,8 +433,7 @@ export default function Home() {
         const r = d.data()
         rows.push([r.empName||'',r.showroom||'',r.type||'',r.time||'',r.date||'',r.reason||'',r.duration||'',r.overdue?'Yes':'No'])
       })
-      const csv = rows.map(r=>r.map(c=>`"${c}"`).join(',')).join('
-')
+      const csv = rows.map(r=>r.map(c=>`"${c}"`).join(',')).join('\n')
       const a = document.createElement('a')
       a.href = 'data:text/csv;charset=utf-8,' + encodeURIComponent(csv)
       a.download = `idealz-archive-before-${cutoffStr}.csv`
