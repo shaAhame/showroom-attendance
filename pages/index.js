@@ -143,6 +143,9 @@ export default function Home() {
   const [leaveEmp, setLeaveEmp] = useState('')
   const [leaveDur, setLeaveDur] = useState('30')
   const [leaveReason, setLeaveR]= useState('')
+  const [returnModal, setReturnM]= useState(false)
+  const [returnEmp, setReturnEmp]= useState('')
+  const [onLeaveEmps, setOnLeaveEmps] = useState([]) // employees currently on leave
   const [toast, setToast]       = useState(null)
   const [clock, setClock]       = useState('')
   const [clockDate, setClkDate] = useState('')
@@ -210,6 +213,30 @@ export default function Home() {
     const byShowroom = {}
     SHOWROOMS.forEach(s=>{ byShowroom[s]=new Set(recs.filter(r=>r.showroom===s&&r.type==='arrive').map(r=>r.empId)).size })
     setStats({arrived,departed,onLeave,byShowroom})
+
+    // Find employees currently on leave (left but not returned yet)
+    const currentlyOnLeave = []
+    const empIds = [...new Set(recs.map(r=>r.empId))]
+    empIds.forEach(empId => {
+      const empRecs = recs.filter(r=>r.empId===empId).sort((a,b)=>(a.createdAt||0)-(b.createdAt||0))
+      const lastRec = empRecs[empRecs.length-1]
+      if (lastRec?.type === 'leave') {
+        const leaveRec = lastRec
+        const now = new Date()
+        const [h,m,s] = leaveRec.time.split(':').map(Number)
+        const leaveTime = new Date()
+        leaveTime.setHours(h,m,s||0,0)
+        const minutesGone = Math.round((now - leaveTime) / 60000)
+        const expectedDur = leaveRec.duration || 30
+        const overdue = minutesGone > expectedDur
+        const emp = emps.find(e=>e.empId===empId)
+        if (emp) currentlyOnLeave.push({
+          ...emp, leaveRec, minutesGone, expectedDur, overdue,
+          overdueBy: overdue ? minutesGone - expectedDur : 0
+        })
+      }
+    })
+    setOnLeaveEmps(currentlyOnLeave)
   }
 
   function showToast(msg,type='success'){setToast({msg,type});setTimeout(()=>setToast(null),3200)}
@@ -309,6 +336,65 @@ export default function Home() {
     showToast(`🕐 Short leave: ${emp.name} (~${leaveDur} min)`)
   }
 
+  async function submitReturn() {
+    const eid = session?.role==='employee' ? employees[0]?.id : returnEmp
+    if (!eid) return showToast('Select an employee.','error')
+    if (!selRoom) return showToast('Select a showroom first.','error')
+    const emp = employees.find(e=>e.id===eid)||employees[0]
+    if (!emp) return
+
+    // GPS check
+    setGpsStatus('checking')
+    showToast('📍 Checking your location…','info')
+    try {
+      const pos = await getCurrentPosition()
+      const check = checkInsideShowroom(selRoom, pos.lat, pos.lng)
+      if (!check.allowed) {
+        setGpsStatus('fail')
+        showToast(check.message,'error')
+        setTimeout(()=>setGpsStatus(''),3000)
+        return
+      }
+      setGpsStatus('ok')
+    } catch(e) {
+      setGpsStatus('fail')
+      showToast('❌ Could not get your location. Please allow GPS access.','error')
+      setTimeout(()=>setGpsStatus(''),3000)
+      return
+    }
+
+    setFpLabel(`Return from leave — ${emp.name}`); setFpOv(true)
+    const ok = await verifyBiometric(emp.empId)
+    setFpOv(false); setGpsStatus('')
+    if (!ok) return showToast('Face ID / fingerprint did not match.','error')
+
+    // Find the original leave record to calculate actual duration
+    const leaveRec = onLeaveEmps.find(e=>e.id===eid)?.leaveRec
+    const actualMinutes = onLeaveEmps.find(e=>e.id===eid)?.minutesGone || 0
+    const expectedDur   = leaveRec?.duration || 30
+    const overdue       = actualMinutes > expectedDur
+    const overdueBy     = overdue ? actualMinutes - expectedDur : 0
+
+    const rec = {
+      empId:emp.empId, empName:emp.name, showroom:selRoom,
+      type:'return', date:today(), time:nowTime(),
+      reason: overdue ? `Returned ${overdueBy} min late (expected ${expectedDur} min, took ${actualMinutes} min)` : `Returned on time (${actualMinutes} min)`,
+      duration: actualMinutes,
+      expectedDuration: expectedDur,
+      overdue, overdueBy,
+    }
+    await addDoc(collection(db,'records'),{...rec,createdAt:Date.now()})
+    setLog(p=>[{...rec,id:Date.now()},...p])
+    setTodayRecs(p=>{const n=[...p,rec];computeStats(employees,n);return n})
+    setReturnM(false); setReturnEmp('')
+
+    if (overdue) {
+      showToast(`⚠️ ${emp.name} returned ${overdueBy} min LATE! (took ${actualMinutes} min, expected ${expectedDur} min)`,'error')
+    } else {
+      showToast(`✅ ${emp.name} returned on time (${actualMinutes} min)`)
+    }
+  }
+
   async function loadReports() {
     setLoading(true)
     try {
@@ -367,8 +453,8 @@ export default function Home() {
 
   if (!mounted || !session) return <div style={{color:'#e8e8f0',textAlign:'center',padding:60,fontFamily:'var(--font-mono)'}}>Loading…</div>
 
-  const typeLabel={arrive:'Arrive',depart:'Depart',leave:'Short Leave',return:'Return'}
-  const logColors={arrive:'#43e97b',depart:'#ff6584',leave:'#f7c948',return:'#6c63ff'}
+  const typeLabel={arrive:'Arrive',depart:'Depart',leave:'Short Leave',return:'Returned'}
+  const logColors={arrive:'#43e97b',depart:'#ff6584',leave:'#f7c948',return:'#a78bfa'}
   const roleColor={employee:'#6b6b8a',manager:'#38b6ff',admin:'#a78bfa',backoffice:'#f7c948'}
 
   return (<>
@@ -448,6 +534,31 @@ export default function Home() {
           })}
         </div>
 
+        {/* On Leave Alert Banner */}
+        {onLeaveEmps.filter(e=>!selRoom||e.showroom===selRoom).length>0&&(
+          <div style={{marginBottom:16,borderRadius:12,overflow:'hidden',border:'1px solid rgba(247,201,72,0.3)'}}>
+            <div style={{padding:'8px 16px',background:'rgba(247,201,72,0.1)',fontSize:'0.76rem',fontWeight:600,color:'var(--gold)',borderBottom:'1px solid rgba(247,201,72,0.2)'}}>
+              🕐 Currently on short leave
+            </div>
+            {onLeaveEmps.filter(e=>!selRoom||e.showroom===selRoom).map(e=>(
+              <div key={e.id} style={{display:'flex',alignItems:'center',gap:10,padding:'10px 16px',background:'rgba(10,10,15,0.5)',borderBottom:'1px solid rgba(42,42,61,0.3)'}}>
+                <div style={{width:30,height:30,borderRadius:'50%',background:e.color+'22',color:e.color,display:'flex',alignItems:'center',justifyContent:'center',fontWeight:700,fontSize:'0.72rem',flexShrink:0}}>{initials(e.name)}</div>
+                <div style={{flex:1}}>
+                  <div style={{fontSize:'0.82rem',fontWeight:500}}>{e.name}</div>
+                  <div style={{fontSize:'0.7rem',color:'var(--muted)'}}>Left at {e.leaveRec.time} · {e.leaveRec.reason} · Expected {e.expectedDur} min</div>
+                </div>
+                <div style={{textAlign:'right',flexShrink:0}}>
+                  <div style={{fontSize:'0.8rem',fontWeight:700,color:e.overdue?'var(--accent2)':'var(--accent3)'}}>{e.minutesGone} min</div>
+                  {e.overdue
+                    ? <div style={{fontSize:'0.68rem',color:'var(--accent2)'}}>⚠️ {e.overdueBy} min overdue!</div>
+                    : <div style={{fontSize:'0.68rem',color:'var(--accent3)'}}>On time</div>
+                  }
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
         {/* GPS Status Bar */}
         {gpsStatus && (
           <div style={{
@@ -496,10 +607,19 @@ export default function Home() {
               onClick={()=>{ const eid=session.role==='employee'?employees[0]?.id:leaveEmp; doAction('depart',eid) }}>
               👤 Face ID — Depart
             </button>
-            <button className="fp-btn" style={{...S.btn,background:'linear-gradient(135deg,#f7c948,#ff9a4a)',color:'#0a0a0f',opacity:selRoom?1:0.5}}
+            <button className="fp-btn" style={{...S.btn,background:'linear-gradient(135deg,#f7c948,#ff9a4a)',color:'#0a0a0f',marginBottom:10,opacity:selRoom?1:0.5}}
               onClick={()=>{ if(!selRoom) return showToast('Select a showroom first.','error'); setLeaveM(true) }}>
               🕐 Short Leave
             </button>
+            {/* Return from Leave — only show if someone is currently on leave */}
+            {onLeaveEmps.length>0 && (session.role==='employee'
+              ? onLeaveEmps.find(e=>e.empId===session.empId)
+              : true) && (
+              <button className="fp-btn" style={{...S.btn,background:'linear-gradient(135deg,#6c63ff,#a78bfa)',color:'#fff',opacity:selRoom?1:0.5}}
+                onClick={()=>{ if(!selRoom) return showToast('Select a showroom first.','error'); setReturnM(true) }}>
+                🔙 Return from Leave
+              </button>
+            )}
           </div>
 
           <div className="card-pad" style={S.card}>
@@ -569,7 +689,10 @@ export default function Home() {
                     <tr key={r.id} style={{borderBottom:'1px solid rgba(42,42,61,0.5)'}}>
                       <td style={{padding:'9px 10px',whiteSpace:'nowrap'}}>{r.empName?.split(' ')[0]}</td>
                       <td style={{padding:'9px 10px',color:'var(--muted)',fontSize:'0.7rem',whiteSpace:'nowrap'}}>{r.showroom?.replace('Idealz ','')}</td>
-                      <td style={{padding:'9px 10px'}}><span style={badge(r.type)}>{typeLabel[r.type]||r.type}</span></td>
+                      <td style={{padding:'9px 10px'}}>
+                        <span style={badge(r.type,r.overdue)}>{typeLabel[r.type]||r.type}</span>
+                        {r.type==='return'&&r.overdue&&<span style={{marginLeft:4,fontSize:'0.65rem',color:'#ff6584'}}>⚠️ +{r.overdueBy}m</span>}
+                      </td>
                       <td style={{padding:'9px 10px',whiteSpace:'nowrap'}}>{r.time}</td>
                       <td style={{padding:'9px 10px',color:'var(--muted)',whiteSpace:'nowrap'}}>{r.date}</td>
                       <td style={{padding:'9px 10px',color:'var(--muted)',maxWidth:120,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{r.reason||'—'}</td>
@@ -753,6 +876,53 @@ export default function Home() {
         </div>
       )}
 
+      {/* Return from Leave Modal */}
+      {returnModal&&(
+        <div style={S.modalBg} onClick={e=>e.target===e.currentTarget&&setReturnM(false)}>
+          <div className="modal-box" style={S.modal}>
+            <h3 style={{fontFamily:'var(--font-head)',fontSize:'1.1rem',marginBottom:6}}>🔙 Return from Leave</h3>
+            <div style={{fontSize:'0.74rem',color:'var(--muted)',marginBottom:16}}>Confirm you are back at the showroom</div>
+
+            {/* Show who is on leave */}
+            {onLeaveEmps.filter(e=>!selRoom||e.showroom===selRoom).length>0 && (
+              <div style={{marginBottom:16,borderRadius:10,overflow:'hidden',border:'1px solid var(--border)'}}>
+                {onLeaveEmps.filter(e=>!selRoom||e.showroom===selRoom).map(e=>(
+                  <div key={e.id} style={{display:'flex',alignItems:'center',gap:10,padding:'10px 12px',background:e.overdue?'rgba(255,101,132,0.05)':'var(--surface)',borderBottom:'1px solid var(--border)'}}>
+                    <div style={{width:30,height:30,borderRadius:'50%',background:e.color+'22',color:e.color,display:'flex',alignItems:'center',justifyContent:'center',fontWeight:700,fontSize:'0.72rem',flexShrink:0}}>{initials(e.name)}</div>
+                    <div style={{flex:1}}>
+                      <div style={{fontSize:'0.8rem',fontWeight:500}}>{e.name}</div>
+                      <div style={{fontSize:'0.68rem',color:'var(--muted)'}}>Out for {e.minutesGone} min · Expected {e.expectedDur} min</div>
+                    </div>
+                    {e.overdue&&<span style={{fontSize:'0.68rem',color:'var(--accent2)',background:'rgba(255,101,132,0.1)',padding:'2px 8px',borderRadius:20,flexShrink:0}}>⚠️ {e.overdueBy}m late</span>}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {session.role!=='employee'&&(
+              <div style={{marginBottom:12}}>
+                <div style={S.inputLabel}>Select Employee</div>
+                <select value={returnEmp} onChange={e=>setReturnEmp(e.target.value)} style={S.adminInput}>
+                  <option value="">— Select —</option>
+                  {onLeaveEmps.filter(e=>!selRoom||e.showroom===selRoom).map(e=>(
+                    <option key={e.id} value={e.id}>{e.name} {e.overdue?`(⚠️ ${e.overdueBy}m overdue)`:''}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            <div style={{padding:'10px 14px',background:'rgba(108,99,255,0.08)',borderRadius:8,fontSize:'0.76rem',color:'var(--accent)',marginBottom:16}}>
+              👤 Face ID will verify your identity when you return
+            </div>
+
+            <div style={{display:'flex',gap:10}}>
+              <button style={{padding:'12px 16px',background:'transparent',color:'var(--muted)',border:'1px solid var(--border)',borderRadius:8,cursor:'pointer',fontFamily:'var(--font-mono)'}} onClick={()=>setReturnM(false)}>Cancel</button>
+              <button style={{...S.btn,flex:1,background:'linear-gradient(135deg,#6c63ff,#a78bfa)',color:'#fff',padding:12}} onClick={submitReturn}>👤 Face ID — I'm Back</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Toast */}
       {toast&&(
         <div style={{...S.toast,borderColor:toast.type==='error'?'var(--accent2)':toast.type==='info'?'var(--accent)':'var(--accent3)'}}>
@@ -774,8 +944,9 @@ export default function Home() {
   </>)
 }
 
-function badge(type){
-  const m={arrive:['rgba(67,233,123,0.15)','#43e97b'],depart:['rgba(255,101,132,0.15)','#ff6584'],leave:['rgba(247,201,72,0.15)','#f7c948'],return:['rgba(108,99,255,0.15)','#6c63ff']}
+function badge(type, overdue=false){
+  if(type==='return'&&overdue) return {display:'inline-block',padding:'2px 8px',borderRadius:20,fontSize:'0.7rem',background:'rgba(255,101,132,0.15)',color:'#ff6584',whiteSpace:'nowrap'}
+  const m={arrive:['rgba(67,233,123,0.15)','#43e97b'],depart:['rgba(255,101,132,0.15)','#ff6584'],leave:['rgba(247,201,72,0.15)','#f7c948'],return:['rgba(167,139,250,0.15)','#a78bfa']}
   const [bg,color]=m[type]||['rgba(107,107,138,0.2)','#6b6b8a']
   return {display:'inline-block',padding:'2px 8px',borderRadius:20,fontSize:'0.7rem',background:bg,color,whiteSpace:'nowrap'}
 }
