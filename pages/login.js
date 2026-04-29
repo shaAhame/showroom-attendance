@@ -5,207 +5,198 @@ import { db } from '../lib/firebase'
 import { collection, getDocs, query, where } from 'firebase/firestore'
 import { saveSession, getSession } from '../lib/auth'
 
-// ── WebAuthn / Face ID ────────────────────────────────────────────────────────
 async function checkBiometricAvailable() {
   try {
     if (!window.PublicKeyCredential) return false
-    const available = await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable()
-    return available
+    return await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable()
   } catch { return false }
 }
 
 async function verifyBiometric(empId) {
-  // Check if device actually has biometrics available
-  const hasBiometric = await checkBiometricAvailable()
-  if (!hasBiometric) {
-    // Device has no Face ID / fingerprint — PIN only is fine
-    return true
-  }
-
-  const challenge = new Uint8Array(32)
-  crypto.getRandomValues(challenge)
-  const storageKey = `idealz_cred_${empId}`
-
+  const has = await checkBiometricAvailable()
+  if (!has) return true
+  const challenge = new Uint8Array(32); crypto.getRandomValues(challenge)
+  const key = `idealz_cred_${empId}`
   try {
-    const existing = localStorage.getItem(storageKey)
+    const existing = localStorage.getItem(key)
     if (existing) {
-      const credId = Uint8Array.from(atob(existing), c => c.charCodeAt(0))
-      await navigator.credentials.get({
-        publicKey: {
-          challenge, timeout: 30000,
-          userVerification: 'required',
-          rpId: location.hostname,
-          allowCredentials: [{ type: 'public-key', id: credId }],
-        }
-      })
+      const credId = Uint8Array.from(atob(existing), c=>c.charCodeAt(0))
+      await navigator.credentials.get({ publicKey:{ challenge, timeout:30000, userVerification:'required', rpId:location.hostname, allowCredentials:[{type:'public-key',id:credId}] } })
     } else {
-      const cred = await navigator.credentials.create({
-        publicKey: {
-          challenge,
-          rp: { name: 'Idealz Attendance', id: location.hostname },
-          user: { id: new TextEncoder().encode(empId), name: empId, displayName: empId },
-          pubKeyCredParams: [{ type: 'public-key', alg: -7 }, { type: 'public-key', alg: -257 }],
-          timeout: 30000,
-          authenticatorSelection: {
-            authenticatorAttachment: 'platform',
-            userVerification: 'required',
-            residentKey: 'preferred',
-          },
-        }
-      })
-      localStorage.setItem(storageKey, btoa(String.fromCharCode(...new Uint8Array(cred.rawId))))
+      const cred = await navigator.credentials.create({ publicKey:{ challenge, rp:{name:'Idealz Attendance',id:location.hostname}, user:{id:new TextEncoder().encode(empId),name:empId,displayName:empId}, pubKeyCredParams:[{type:'public-key',alg:-7},{type:'public-key',alg:-257}], timeout:30000, authenticatorSelection:{authenticatorAttachment:'platform',userVerification:'required',residentKey:'preferred'} } })
+      localStorage.setItem(key, btoa(String.fromCharCode(...new Uint8Array(cred.rawId))))
     }
     return true
-  } catch (e) {
-    if (e.name === 'NotAllowedError') return false // user cancelled or face didn't match
-    return true // any other error = skip biometric, allow PIN only
-  }
+  } catch(e) { if(e.name==='NotAllowedError') return false; return true }
 }
 
 export default function Login() {
-  const router  = useRouter()
+  const router = useRouter()
   const [mounted, setMounted] = useState(false)
-  const [step, setStep]       = useState('id')   // 'id' | 'pin' | 'bio'
+  const [step, setStep]       = useState('id')
   const [empId, setEmpId]     = useState('')
   const [employee, setEmp]    = useState(null)
   const [pin, setPin]         = useState(['','','','','',''])
   const [error, setError]     = useState('')
   const [loading, setLoading] = useState(false)
   const [shake, setShake]     = useState(false)
-  const [bioStatus, setBioStatus] = useState('') // 'scanning' | 'success' | 'fail'
-  const idRef    = useRef()
-  const pinRefs  = Array.from({length:6}, ()=>useRef())
+  const [bioStatus, setBio]   = useState('')
+  const idRef   = useRef()
+  const pinRefs = [useRef(),useRef(),useRef(),useRef(),useRef(),useRef()]
 
-  useEffect(() => {
-    setMounted(true)
-    if (getSession()) router.replace('/')
-  }, [])
+  useEffect(()=>{ setMounted(true); if(getSession()) router.replace('/') },[])
+  useEffect(()=>{
+    if(step==='id')  setTimeout(()=>idRef.current?.focus(),100)
+    if(step==='pin') setTimeout(()=>pinRefs[0].current?.focus(),100)
+  },[step])
 
-  useEffect(() => {
-    if (step === 'id')  setTimeout(()=>idRef.current?.focus(), 100)
-    if (step === 'pin') setTimeout(()=>pinRefs[0].current?.focus(), 100)
-  }, [step])
-
-  // ── Step 1: Employee ID ───────────────────────────────────────────────────
   async function handleIdSubmit(e) {
     e?.preventDefault()
     const id = empId.trim().toUpperCase()
-    if (!id) return setError('Please enter your Employee ID')
+    if(!id) return setError('Please enter your Employee ID')
     setLoading(true); setError('')
     try {
-      const snap = await getDocs(query(collection(db,'employees'), where('empId','==',id)))
-      if (snap.empty) { setError('Employee ID not found.'); setLoading(false); return }
-      const emp = { id: snap.docs[0].id, ...snap.docs[0].data() }
-      if (!emp.pin) { setError('No PIN set for this account. Ask your Admin.'); setLoading(false); return }
+      const snap = await getDocs(query(collection(db,'employees'),where('empId','==',id)))
+      if(snap.empty) { setError('Employee ID not found.'); setLoading(false); return }
+      const emp = {id:snap.docs[0].id,...snap.docs[0].data()}
+      if(!emp.pin) { setError('No PIN set. Contact your Admin.'); setLoading(false); return }
       setEmp(emp); setStep('pin')
     } catch { setError('Connection error. Check your internet.') }
     setLoading(false)
   }
 
-  // ── Step 2: PIN ───────────────────────────────────────────────────────────
-  function handlePinDigit(val, i) {
-    if (!/^\d*$/.test(val)) return
-    const p = [...pin]; p[i] = val.slice(-1); setPin(p); setError('')
-    if (val && i < 5) pinRefs[i+1].current?.focus()
-    if (val && i === 5) checkPin([...p.slice(0,5), val.slice(-1)].join(''))
+  function handlePinDigit(val,i) {
+    if(!/^\d*$/.test(val)) return
+    const p=[...pin]; p[i]=val.slice(-1); setPin(p); setError('')
+    if(val&&i<5) pinRefs[i+1].current?.focus()
+    if(val&&i===5) checkPin([...p.slice(0,5),val.slice(-1)].join(''))
   }
-  function handlePinKey(e, i) {
-    if (e.key==='Backspace' && !pin[i] && i>0) { pinRefs[i-1].current?.focus() }
-    if (e.key==='Enter') checkPin(pin.join(''))
+  function handlePinKey(e,i) {
+    if(e.key==='Backspace'&&!pin[i]&&i>0) pinRefs[i-1].current?.focus()
+    if(e.key==='Enter') checkPin(pin.join(''))
   }
   async function checkPin(entered) {
-    const full = entered || pin.join('')
-    if (full.length < 4) return
-    if (full === employee.pin) {
-      setStep('bio')
-      await runBiometric()
-    } else {
+    const full = entered||pin.join('')
+    if(full.length<4) return
+    if(full===employee.pin) { setStep('bio'); await runBiometric() }
+    else {
       setShake(true); setPin(['','','','','','']); setError('Wrong PIN. Try again.')
-      setTimeout(()=>{ setShake(false); pinRefs[0].current?.focus() }, 500)
+      setTimeout(()=>{ setShake(false); pinRefs[0].current?.focus() },500)
     }
   }
-
-  // ── Step 3: Face ID / Fingerprint ─────────────────────────────────────────
   async function runBiometric() {
-    setBioStatus('scanning')
+    setBio('scanning')
     const ok = await verifyBiometric(employee.empId)
-    if (ok) {
-      setBioStatus('success')
-      setTimeout(() => {
-        saveSession(employee)
-        router.replace('/')
-      }, 800)
-    } else {
-      setBioStatus('fail')
-      setError('Face ID / fingerprint did not match. Try again.')
-      setTimeout(() => { setStep('pin'); setPin(['','','','','','']); setBioStatus('') }, 1500)
-    }
+    if(ok) { setBio('success'); setTimeout(()=>{ saveSession(employee); router.replace('/') },800) }
+    else { setBio('fail'); setError('Biometric did not match.'); setTimeout(()=>{ setStep('pin'); setPin(['','','','','','']); setBio('') },1500) }
   }
 
   const filled = pin.filter(p=>p!=='').length
-
-  if (!mounted) return null
+  if(!mounted) return null
 
   return (<>
     <Head>
-      <title>Idealz Attendance</title>
-      <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1"/>
-      <meta name="theme-color" content="#0a0a0f"/>
+      <title>iDealz Attendance</title>
+      <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1"/>
+      <meta name="theme-color" content="#1a6fe8"/>
       <meta name="apple-mobile-web-app-capable" content="yes"/>
     </Head>
 
-    <div style={S.bg}>
-      <div style={S.gridBg}/>
+    <div style={{ minHeight:'100vh', display:'flex', fontFamily:"'Inter',sans-serif", position:'relative', overflow:'hidden' }}>
 
-      <div style={S.container}>
-        {/* Logo */}
-        <div style={S.logo}>
-          <div style={S.logoDot}/>
-          <span style={S.logoText}>IDEALZ · ATTEND</span>
+      {/* Left panel — brand side (hidden on mobile) */}
+      <div style={{ flex:'0 0 45%', background:'#1a6fe8', position:'relative', overflow:'hidden', display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', padding:48 }} className="brand-panel">
+        {/* Showroom background image */}
+        <div style={{ position:'absolute', inset:0, backgroundImage:'url(/prime.jpeg)', backgroundSize:'cover', backgroundPosition:'center', opacity:0.18 }}/>
+        {/* Blue overlay */}
+        <div style={{ position:'absolute', inset:0, background:'linear-gradient(135deg, #1456b8 0%, #1a6fe8 50%, #2d7ff9 100%)', opacity:0.92 }}/>
+        {/* Pattern overlay */}
+        <div style={{ position:'absolute', inset:0, backgroundImage:'radial-gradient(circle at 20% 20%, rgba(255,255,255,0.08) 0%, transparent 50%), radial-gradient(circle at 80% 80%, rgba(255,255,255,0.05) 0%, transparent 50%)' }}/>
+
+        <div style={{ position:'relative', zIndex:1, textAlign:'center', maxWidth:360 }}>
+          {/* Logo */}
+          <div style={{ marginBottom:32 }}>
+            <img src="https://raw.githubusercontent.com/shaAhame/showroom-attendance/main/logo.jpeg" alt="iDealz" style={{ height:56, objectFit:'contain', filter:'brightness(0) invert(1)' }}/>
+          </div>
+          <h1 style={{ color:'#fff', fontSize:'2rem', fontWeight:800, marginBottom:12, lineHeight:1.2 }}>Attendance System</h1>
+          <p style={{ color:'rgba(255,255,255,0.75)', fontSize:'1rem', lineHeight:1.6, marginBottom:40 }}>
+            Secure biometric attendance tracking for all Idealz showrooms
+          </p>
+
+          {/* Showroom cards */}
+          <div style={{ display:'flex', flexDirection:'column', gap:10 }}>
+            {[
+              { name:'Idealz Prime', img:'/prime.jpeg', loc:'Galle Rd, Colombo 4' },
+              { name:'Idealz Liberty Plaza', img:'/liberty.jpg', loc:'R.A. De Mel Mawatha, Colombo 3' },
+              { name:'Idealz Marino', img:'/marino.jpg', loc:'Marino Mall, Colombo 3' },
+            ].map(s=>(
+              <div key={s.name} style={{ display:'flex', alignItems:'center', gap:12, padding:'10px 14px', background:'rgba(255,255,255,0.12)', borderRadius:12, backdropFilter:'blur(8px)', border:'1px solid rgba(255,255,255,0.2)', textAlign:'left' }}>
+                <div style={{ width:40, height:40, borderRadius:8, overflow:'hidden', flexShrink:0, border:'2px solid rgba(255,255,255,0.3)' }}>
+                  <img src={s.img} alt={s.name} style={{ width:'100%', height:'100%', objectFit:'cover' }}/>
+                </div>
+                <div>
+                  <div style={{ color:'#fff', fontSize:'0.82rem', fontWeight:600 }}>{s.name}</div>
+                  <div style={{ color:'rgba(255,255,255,0.65)', fontSize:'0.72rem' }}>{s.loc}</div>
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
+      </div>
 
-        <div style={S.card}>
+      {/* Right panel — login form */}
+      <div style={{ flex:1, background:'#f7f9fc', display:'flex', alignItems:'center', justifyContent:'center', padding:32, minHeight:'100vh' }}>
+        <div style={{ width:'100%', maxWidth:400 }}>
 
-          {/* ── STEP 1: Employee ID ── */}
-          {step==='id' && <>
-            <div style={S.cardIcon}>🏢</div>
-            <div style={S.cardTitle}>Welcome</div>
-            <div style={S.cardSub}>Enter your Employee ID to sign in</div>
+          {/* Mobile logo */}
+          <div style={{ textAlign:'center', marginBottom:32, display:'none' }} className="mobile-logo">
+            <img src="https://raw.githubusercontent.com/shaAhame/showroom-attendance/main/logo.jpeg" alt="iDealz" style={{ height:40, objectFit:'contain' }}/>
+          </div>
+
+          {/* Step 1: Employee ID */}
+          {step==='id'&&(<>
+            <div style={{ marginBottom:28 }}>
+              <h2 style={{ fontSize:'1.75rem', fontWeight:800, color:'#0f172a', marginBottom:6 }}>Welcome back 👋</h2>
+              <p style={{ color:'#64748b', fontSize:'0.9rem' }}>Enter your Employee ID to sign in</p>
+            </div>
             <form onSubmit={handleIdSubmit}>
-              <input
-                ref={idRef}
-                value={empId}
-                onChange={e=>{ setEmpId(e.target.value.toUpperCase()); setError('') }}
-                placeholder="e.g. EMP-001"
-                style={S.textInput}
-                autoCapitalize="characters"
-                autoComplete="off"
-                autoCorrect="off"
-              />
-              {error && <div style={S.errBox}>{error}</div>}
-              <button type="submit" style={{...S.mainBtn, opacity:loading?0.6:1}} disabled={loading}>
-                {loading ? 'Checking…' : 'Continue →'}
+              <div style={{ marginBottom:16 }}>
+                <label style={{ display:'block', fontSize:'0.8rem', fontWeight:600, color:'#374151', marginBottom:6 }}>Employee ID</label>
+                <input
+                  ref={idRef}
+                  value={empId}
+                  onChange={e=>{ setEmpId(e.target.value.toUpperCase()); setError('') }}
+                  placeholder="e.g. EMP-001"
+                  style={{ ...inputStyle, letterSpacing:'0.05em' }}
+                  autoCapitalize="characters"
+                  autoComplete="off"
+                />
+              </div>
+              {error&&<div style={errorStyle}>{error}</div>}
+              <button type="submit" style={{ ...btnPrimary, opacity:loading?0.7:1 }} disabled={loading}>
+                {loading?'Checking…':'Continue →'}
               </button>
             </form>
-          </>}
+          </>)}
 
-          {/* ── STEP 2: PIN ── */}
-          {step==='pin' && <>
-            {/* Employee info */}
-            <div style={S.empChip}>
-              <div style={{...S.empAvatar, background:employee?.color+'33', color:employee?.color}}>
-                {employee?.name?.split(' ').map(w=>w[0]).join('').slice(0,2)}
+          {/* Step 2: PIN */}
+          {step==='pin'&&(<>
+            <div style={{ display:'flex', alignItems:'center', gap:12, padding:'14px 16px', background:'#fff', borderRadius:14, border:'1.5px solid #e2e8f0', marginBottom:24, boxShadow:'0 1px 4px rgba(0,0,0,0.06)' }}>
+              <div style={{ width:44, height:44, borderRadius:'50%', background:employee?.color+'22', color:employee?.color, display:'flex', alignItems:'center', justifyContent:'center', fontWeight:700, fontSize:'0.9rem', flexShrink:0 }}>
+                {employee?.name?.split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase()}
               </div>
               <div>
-                <div style={S.empName}>{employee?.name}</div>
-                <div style={S.empSub}>{employee?.showroom?.replace('Idealz ','')} · {employee?.staffType==='backoffice'?'Back Office':'Showroom'}</div>
+                <div style={{ fontSize:'0.95rem', fontWeight:600, color:'#0f172a' }}>{employee?.name}</div>
+                <div style={{ fontSize:'0.75rem', color:'#64748b' }}>{employee?.showroom?.replace('Idealz ','')} · {employee?.staffType==='backoffice'?'Back Office':'Showroom Staff'}</div>
               </div>
             </div>
 
-            <div style={S.cardTitle}>Enter your PIN</div>
-            <div style={S.cardSub}>6-digit secret PIN</div>
+            <div style={{ marginBottom:24 }}>
+              <h2 style={{ fontSize:'1.5rem', fontWeight:800, color:'#0f172a', marginBottom:6 }}>Enter your PIN</h2>
+              <p style={{ color:'#64748b', fontSize:'0.85rem' }}>6-digit secret PIN</p>
+            </div>
 
-            <div style={{...S.pinRow, animation:shake?'shake .4s ease':'none'}}>
+            <div style={{ display:'flex', gap:8, justifyContent:'center', marginBottom:20, animation:shake?'shake .4s ease':'none' }}>
               {pin.map((p,i)=>(
                 <input
                   key={i}
@@ -216,97 +207,54 @@ export default function Login() {
                   value={p}
                   onChange={e=>handlePinDigit(e.target.value,i)}
                   onKeyDown={e=>handlePinKey(e,i)}
-                  style={{
-                    ...S.pinBox,
-                    borderColor: p ? '#6c63ff' : '#2a2a3d',
-                    background:  p ? 'rgba(108,99,255,0.15)' : '#12121a',
-                    boxShadow:   p ? '0 0 12px rgba(108,99,255,0.3)' : 'none',
-                  }}
+                  style={{ width:48, height:58, borderRadius:12, border:`2px solid ${p?'#1a6fe8':'#e2e8f0'}`, textAlign:'center', fontSize:'1.6rem', color:'#0f172a', fontFamily:"'Inter',sans-serif", outline:'none', transition:'all .15s', background:p?'#e8f1fd':'#fff', boxShadow:p?'0 0 0 3px rgba(26,111,232,0.12)':'none' }}
                 />
               ))}
             </div>
 
-            {error && <div style={S.errBox}>{error}</div>}
-
-            <button
-              style={{...S.mainBtn, opacity:filled>=4?1:0.4}}
-              onClick={()=>checkPin()}
-              disabled={filled<4||loading}
-            >
-              {loading ? 'Verifying…' : '🔐 Verify PIN'}
+            {error&&<div style={errorStyle}>{error}</div>}
+            <button style={{ ...btnPrimary, opacity:filled>=4?1:0.5 }} onClick={()=>checkPin()} disabled={filled<4||loading}>
+              {loading?'Verifying…':'🔐 Verify PIN'}
             </button>
-
-            <button style={S.backBtn} onClick={()=>{ setStep('id'); setPin(['','','','','','']); setError('') }}>
+            <button style={btnGhost} onClick={()=>{ setStep('id'); setPin(['','','','','','']); setError('') }}>
               ← Different account
             </button>
-          </>}
+          </>)}
 
-          {/* ── STEP 3: Biometric ── */}
-          {step==='bio' && <>
-            <div style={{textAlign:'center', padding:'8px 0'}}>
-              <div style={{
-                ...S.bioCircle,
-                borderColor: bioStatus==='success'?'#43e97b': bioStatus==='fail'?'#ff6584':'#6c63ff',
-                boxShadow: `0 0 40px ${bioStatus==='success'?'rgba(67,233,123,0.5)':bioStatus==='fail'?'rgba(255,101,132,0.5)':'rgba(108,99,255,0.5)'}`,
-                animation: bioStatus==='scanning'?'pulse 1.5s infinite':'none',
-              }}>
-                {bioStatus==='success' ? '✅' : bioStatus==='fail' ? '❌' : '👤'}
+          {/* Step 3: Biometric */}
+          {step==='bio'&&(
+            <div style={{ textAlign:'center', padding:'20px 0' }}>
+              <div style={{ width:100, height:100, borderRadius:'50%', border:`3px solid ${bioStatus==='success'?'#16a34a':bioStatus==='fail'?'#dc2626':'#1a6fe8'}`, display:'flex', alignItems:'center', justifyContent:'center', fontSize:'2.8rem', margin:'0 auto 20px', background: bioStatus==='success'?'#dcfce7':bioStatus==='fail'?'#fee2e2':'#e8f1fd', transition:'all .3s' }}>
+                {bioStatus==='success'?'✅':bioStatus==='fail'?'❌':'👤'}
               </div>
-              <div style={S.cardTitle}>
-                {bioStatus==='scanning' ? 'Scan Face ID / Fingerprint' : bioStatus==='success' ? 'Verified!' : 'Not matched'}
-              </div>
-              <div style={S.cardSub}>
-                {bioStatus==='scanning' ? 'Look at your camera or place finger on sensor' : bioStatus==='success' ? 'Logging you in…' : 'Biometric did not match'}
-              </div>
-              {bioStatus==='fail' && <div style={S.errBox}>Going back to PIN…</div>}
-              {bioStatus==='scanning' && (
-                <button style={{...S.backBtn, marginTop:16}} onClick={()=>{ setStep('pin'); setPin(['','','','','','']); setBioStatus('') }}>
-                  Cancel
-                </button>
-              )}
+              <h2 style={{ fontSize:'1.4rem', fontWeight:700, color:'#0f172a', marginBottom:8 }}>
+                {bioStatus==='scanning'?'Scan Face ID / Fingerprint':bioStatus==='success'?'Verified!':'Not matched'}
+              </h2>
+              <p style={{ color:'#64748b', fontSize:'0.85rem' }}>
+                {bioStatus==='scanning'?'Look at your camera or place finger on sensor':bioStatus==='success'?'Logging you in…':'Going back to PIN…'}
+              </p>
             </div>
-          </>}
+          )}
 
-        </div>
-
-        <div style={S.footer}>
-          Idealz Attendance System · Secured with PIN + Biometrics
+          <div style={{ textAlign:'center', marginTop:32, fontSize:'0.72rem', color:'#94a3b8' }}>
+            Secured with PIN + Biometrics · iDealz Lanka
+          </div>
         </div>
       </div>
-
-      <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Syne:wght@700;800&family=DM+Mono:wght@400;500&display=swap');
-        *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
-        body{background:#0a0a0f;font-family:'DM Mono',monospace}
-        @keyframes shake{0%,100%{transform:translateX(0)}20%{transform:translateX(-8px)}40%{transform:translateX(8px)}60%{transform:translateX(-5px)}80%{transform:translateX(5px)}}
-        @keyframes fadeUp{from{opacity:0;transform:translateY(20px)}to{opacity:1;transform:translateY(0)}}
-        @keyframes pulse{0%,100%{box-shadow:0 0 20px rgba(108,99,255,0.4)}50%{box-shadow:0 0 60px rgba(108,99,255,0.8)}}
-      `}</style>
     </div>
+
+    <style>{`
+      @media(max-width:768px) {
+        .brand-panel { display:none !important; }
+        .mobile-logo { display:block !important; }
+      }
+      @keyframes shake{0%,100%{transform:translateX(0)}20%{transform:translateX(-8px)}40%{transform:translateX(8px)}60%{transform:translateX(-5px)}80%{transform:translateX(5px)}}
+      @keyframes fadeUp{from{opacity:0;transform:translateY(20px)}to{opacity:1;transform:translateY(0)}}
+    `}</style>
   </>)
 }
 
-const S = {
-  bg:        { minHeight:'100vh', display:'flex', alignItems:'center', justifyContent:'center', background:'#0a0a0f', padding:20, position:'relative', overflow:'hidden' },
-  gridBg:    { position:'fixed', inset:0, backgroundImage:'linear-gradient(rgba(108,99,255,0.05) 1px,transparent 1px),linear-gradient(90deg,rgba(108,99,255,0.05) 1px,transparent 1px)', backgroundSize:'40px 40px', pointerEvents:'none' },
-  container: { width:'100%', maxWidth:420, position:'relative', zIndex:1, animation:'fadeUp .4s ease' },
-  logo:      { display:'flex', alignItems:'center', justifyContent:'center', gap:10, marginBottom:28 },
-  logoDot:   { width:10, height:10, borderRadius:'50%', background:'#6c63ff', boxShadow:'0 0 16px #6c63ff' },
-  logoText:  { fontFamily:"'Syne',sans-serif", fontWeight:800, fontSize:'1.05rem', letterSpacing:'-0.02em', color:'#e8e8f0' },
-  card:      { background:'#1a1a26', border:'1px solid #2a2a3d', borderRadius:22, padding:32, marginBottom:16 },
-  cardIcon:  { fontSize:'2.5rem', textAlign:'center', marginBottom:12 },
-  cardTitle: { fontFamily:"'Syne',sans-serif", fontSize:'1.35rem', fontWeight:800, color:'#e8e8f0', marginBottom:6, textAlign:'center' },
-  cardSub:   { fontSize:'0.76rem', color:'#6b6b8a', marginBottom:24, textAlign:'center' },
-  textInput: { width:'100%', padding:'14px 16px', background:'#12121a', border:'1px solid #2a2a3d', borderRadius:12, color:'#e8e8f0', fontFamily:"'DM Mono',monospace", fontSize:'16px', outline:'none', marginBottom:14, letterSpacing:'0.05em' },
-  errBox:    { background:'rgba(255,101,132,0.1)', border:'1px solid rgba(255,101,132,0.3)', borderRadius:8, padding:'8px 12px', fontSize:'0.76rem', color:'#ff6584', marginBottom:14, textAlign:'center' },
-  mainBtn:   { width:'100%', padding:15, background:'#6c63ff', color:'#fff', border:'none', borderRadius:12, fontFamily:"'Syne',sans-serif", fontWeight:700, fontSize:'1rem', cursor:'pointer', transition:'all .2s', letterSpacing:'-0.01em' },
-  backBtn:   { width:'100%', padding:'10px', background:'transparent', color:'#6b6b8a', border:'none', fontFamily:"'DM Mono',monospace", fontSize:'0.78rem', cursor:'pointer', marginTop:12, textAlign:'center' },
-  empChip:   { display:'flex', alignItems:'center', gap:12, padding:'12px 14px', background:'#12121a', border:'1px solid #2a2a3d', borderRadius:12, marginBottom:22 },
-  empAvatar: { width:42, height:42, borderRadius:'50%', display:'flex', alignItems:'center', justifyContent:'center', fontWeight:700, fontSize:'0.85rem', flexShrink:0 },
-  empName:   { fontSize:'0.9rem', fontWeight:500, color:'#e8e8f0' },
-  empSub:    { fontSize:'0.7rem', color:'#6b6b8a', marginTop:2 },
-  pinRow:    { display:'flex', gap:8, justifyContent:'center', marginBottom:20 },
-  pinBox:    { width:44, height:54, borderRadius:10, border:'1px solid', textAlign:'center', fontSize:'1.4rem', color:'#e8e8f0', fontFamily:"'DM Mono',monospace", outline:'none', transition:'all .15s', cursor:'text' },
-  bioCircle: { width:110, height:110, borderRadius:'50%', border:'3px solid', display:'flex', alignItems:'center', justifyContent:'center', fontSize:'2.8rem', margin:'0 auto 20px', transition:'all .3s' },
-  footer:    { textAlign:'center', fontSize:'0.68rem', color:'#2a2a3d' },
-}
+const inputStyle = { width:'100%', padding:'13px 16px', background:'#fff', border:'1.5px solid #e2e8f0', borderRadius:12, color:'#0f172a', fontFamily:"'Inter',sans-serif", fontSize:16, outline:'none', transition:'border-color .2s, box-shadow .2s' }
+const btnPrimary = { width:'100%', padding:15, background:'#1a6fe8', color:'#fff', border:'none', borderRadius:12, fontFamily:"'Inter',sans-serif", fontWeight:700, fontSize:'1rem', cursor:'pointer', transition:'all .2s', marginBottom:10 }
+const btnGhost   = { width:'100%', padding:'10px', background:'transparent', color:'#64748b', border:'none', fontFamily:"'Inter',sans-serif", fontSize:'0.82rem', cursor:'pointer', textAlign:'center', display:'block' }
+const errorStyle = { background:'#fee2e2', border:'1px solid #fca5a5', borderRadius:8, padding:'9px 14px', fontSize:'0.8rem', color:'#dc2626', marginBottom:14, textAlign:'center' }
