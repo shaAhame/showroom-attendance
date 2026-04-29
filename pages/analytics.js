@@ -5,14 +5,14 @@ import { collection, getDocs, query, where } from 'firebase/firestore'
 
 const SHOWROOMS = [
   { key: 'Idealz Marino',       icon: '🏛️' },
-  { key: 'Idealz Libert Plaza', icon: '🏬' },
+  { key: 'Idealz Liberty Plaza', icon: '🏬' },
   { key: 'Idealz Prime',        icon: '🏪' },
 ]
 
 // Shift schedules per location + staff type
 const SHIFTS = {
   'Idealz Marino':       { showroom:   { start:'10:00', end:'20:00' } },
-  'Idealz Libert Plaza': { showroom:   { start:'10:00', end:'19:00' } },
+  'Idealz Liberty Plaza': { showroom:   { start:'10:00', end:'19:00' } },
   'Idealz Prime':        { showroom:   { start:'09:45', end:'19:30' },
                            backoffice: { start:'09:30', end:'18:30' } },
 }
