@@ -289,6 +289,13 @@ export default function Home() {
     const emp = employees.find(e=>e.id===eid) || employees[0]
     if (!emp) return showToast('Employee not found.','error')
 
+    // ── Check: prevent duplicate arrive/depart same day ────────────────────
+    const alreadyDone = todayRecs.find(r => r.empId === emp.empId && r.type === type)
+    if (alreadyDone) {
+      const label = type === 'arrive' ? 'Arrival' : 'Departure'
+      return showToast(`❌ ${emp.name} already recorded ${label} today at ${alreadyDone.time}`, 'error')
+    }
+
     // ── Step 1: GPS Location Check ──────────────────────────────────────────
     setGpsStatus('checking')
     showToast('📍 Checking your location…','info')
