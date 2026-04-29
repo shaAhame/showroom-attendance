@@ -1,4 +1,4 @@
-# 🏢 Idealz Marinottendance System
+# 🏢 Idealz Attendance System
 ### Next.js + Firebase + Vercel
 
 Fingerprint-based attendance system for 3 showrooms.
