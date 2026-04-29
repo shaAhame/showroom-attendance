@@ -523,7 +523,10 @@ export default function Home() {
 
       {/* ── NAV ── */}
       <nav className="nav-bar" style={S.nav}>
-        <div style={S.brand}><div style={S.dot}/>IDEALZ · ATTEND</div>
+        <div style={S.brand}>
+          <img src="https://raw.githubusercontent.com/shaAhame/showroom-attendance/main/logo.jpeg" alt="iDealz" style={{height:32,objectFit:'contain'}}/>
+          <span style={{fontSize:'0.78rem',fontWeight:600,color:'#64748b',borderLeft:'1px solid #e2e8f0',paddingLeft:10,marginLeft:4}}>Attendance</span>
+        </div>
         <div className="desktop-tabs" style={S.tabs}>
           <button style={{...S.tab,...(tab==='checkin'?S.tabOn:{})}} onClick={()=>setTab('checkin')}>Check In/Out</button>
           {canViewReports(session) && <button style={{...S.tab,...(tab==='report'?S.tabOn:{})}} onClick={()=>setTab('report')}>Reports</button>}
@@ -554,12 +557,12 @@ export default function Home() {
 
       {/* ── ROLE BANNER ── */}
       {session.role === 'employee' && (
-        <div style={{background:'rgba(108,99,255,0.08)',borderBottom:'1px solid rgba(108,99,255,0.2)',padding:'8px 24px',fontSize:'0.76rem',color:'var(--accent)',textAlign:'center'}}>
+        <div style={{background:'#e8f1fd',borderBottom:'1px solid #bfdbfe',padding:'8px 24px',fontSize:'0.76rem',color:'#1456b8',textAlign:'center',fontWeight:500}}>
           👋 Welcome, {session.name} · You can check in and out for yourself only
         </div>
       )}
       {session.role === 'manager' && (
-        <div style={{background:'rgba(56,182,255,0.08)',borderBottom:'1px solid rgba(56,182,255,0.2)',padding:'8px 24px',fontSize:'0.76rem',color:'#38b6ff',textAlign:'center'}}>
+        <div style={{background:'#f0f9ff',borderBottom:'1px solid #bae6fd',padding:'8px 24px',fontSize:'0.76rem',color:'#0369a1',textAlign:'center',fontWeight:500}}>
           👔 Manager view · {session.showroom}
         </div>
       )}
@@ -577,13 +580,22 @@ export default function Home() {
         <div className="room-grid" style={S.roomGrid}>
           {SHOWROOMS.map((s,i)=>{
             const locked = (session.role==='employee'||session.role==='manager') && s!==session.showroom
+            const imgs = ['https://raw.githubusercontent.com/shaAhame/showroom-attendance/main/IMG_0749.jpeg','https://raw.githubusercontent.com/shaAhame/showroom-attendance/main/liberty.jpg','https://raw.githubusercontent.com/shaAhame/showroom-attendance/main/IMG_4420.jpeg']
             return (
-              <div key={s} style={{...S.roomCard,...(selRoom===s?S.roomOn:{}),opacity:locked?0.35:1,cursor:locked?'not-allowed':'pointer'}}
+              <div key={s} style={{...S.roomCard,...(selRoom===s?S.roomOn:{}),opacity:locked?0.4:1,cursor:locked?'not-allowed':'pointer'}}
                 onClick={()=>{ if(!locked){setSelRoom(s)} }}>
-                <div style={{fontSize:'1.8rem',marginBottom:6}}>{ICONS[i]}</div>
-                <div style={{fontFamily:'var(--font-head)',fontWeight:700,fontSize:'0.9rem',marginBottom:2}}>{s}</div>
-                <div style={{fontSize:'0.68rem',color:'var(--muted)'}}>{stats.byShowroom?.[s]??0} in today</div>
-                {locked && <div style={{fontSize:'0.62rem',color:'var(--muted)',marginTop:4}}>🔒 No access</div>}
+                {/* Showroom photo */}
+                <div style={{height:90,overflow:'hidden',position:'relative'}}>
+                  <img src={imgs[i]} alt={s} style={{width:'100%',height:'100%',objectFit:'cover',transition:'transform .3s'}}/>
+                  <div style={{position:'absolute',inset:0,background:selRoom===s?'rgba(26,111,232,0.15)':'rgba(0,0,0,0.08)'}}/>
+                  {locked&&<div style={{position:'absolute',top:6,right:6,background:'rgba(0,0,0,0.6)',borderRadius:6,padding:'2px 7px',fontSize:'0.65rem',color:'#fff'}}>🔒</div>}
+                  {selRoom===s&&<div style={{position:'absolute',top:6,right:6,background:'#1a6fe8',borderRadius:6,padding:'2px 8px',fontSize:'0.65rem',color:'#fff',fontWeight:600}}>✓ Selected</div>}
+                </div>
+                {/* Card info */}
+                <div style={{padding:'10px 12px'}}>
+                  <div style={{fontFamily:"'Inter',sans-serif",fontWeight:700,fontSize:'0.82rem',marginBottom:2,color:selRoom===s?'#1a6fe8':'#0f172a'}}>{s}</div>
+                  <div style={{fontSize:'0.68rem',color:'#64748b'}}>{stats.byShowroom?.[s]??0} checked in today</div>
+                </div>
               </div>
             )
           })}
@@ -685,8 +697,8 @@ export default function Home() {
                 : log.map(r=>(
                   <div key={r.id} style={S.logRow}>
                     <div style={{width:6,height:6,borderRadius:'50%',background:logColors[r.type]||'#fff',flexShrink:0,marginTop:5}}/>
-                    <span style={{color:'var(--muted)',fontSize:'0.7rem',whiteSpace:'nowrap'}}>{r.time}</span>
-                    <span style={{fontSize:'0.74rem',overflow:'hidden',textOverflow:'ellipsis'}}>{r.empName.split(' ')[0]} · {typeLabel[r.type]}{r.duration?` (${r.duration}m)`:''}</span>
+                    <span style={{color:'#94a3b8',fontSize:'0.7rem',whiteSpace:'nowrap'}}>{r.time}</span>
+                    <span style={{fontSize:'0.74rem',overflow:'hidden',textOverflow:'ellipsis',color:'#374151'}}>{r.empName.split(' ')[0]} · {typeLabel[r.type]}{r.duration?` (${r.duration}m)`:''}</span>
                   </div>
                 ))}
             </div>
@@ -907,8 +919,8 @@ export default function Home() {
       {fpOverlay&&(
         <div style={S.fpOv}>
           <div style={S.fpCircle}>👤</div>
-          <div style={{fontFamily:'var(--font-head)',fontSize:'1.1rem',textAlign:'center',padding:'0 20px'}}>{fpLabel}</div>
-          <div style={{fontSize:'0.78rem',color:'var(--muted)'}}>Use Face ID or fingerprint sensor</div>
+          <div style={{fontFamily:"'Inter',sans-serif",fontSize:'1.1rem',fontWeight:700,textAlign:'center',padding:'0 20px',color:'#fff'}}>{fpLabel}</div>
+          <div style={{fontSize:'0.78rem',color:'rgba(255,255,255,0.7)'}}>Use Face ID or fingerprint sensor</div>
         </div>
       )}
 
@@ -1065,7 +1077,7 @@ export default function Home() {
           {canViewReports(session)&&<button className={`bnav-btn${tab==='report'?' on':''}`} onClick={()=>setTab('report')}><span className="bnav-icon">📊</span><span>Reports</span></button>}
           {canManageEmployees(session)&&<button className={`bnav-btn${tab==='admin'?' on':''}`} onClick={()=>setTab('admin')}><span className="bnav-icon">👥</span><span>Admin</span></button>}
           {canViewAnalytics(session)&&<a href="/analytics" className="bnav-btn"><span className="bnav-icon">📈</span><span>Analytics</span></a>}
-          <button className="bnav-btn" onClick={logout}><span className="bnav-icon">🚪</span><span>Sign out</span></button>
+          <button className="bnav-btn" onClick={logout} style={{color:'#ef4444'}}><span className="bnav-icon">🚪</span><span>Sign out</span></button>
         </div>
       </div>
     </div>
@@ -1073,42 +1085,42 @@ export default function Home() {
 }
 
 function badge(type, overdue=false){
-  if(type==='return'&&overdue) return {display:'inline-block',padding:'2px 8px',borderRadius:20,fontSize:'0.7rem',background:'rgba(255,101,132,0.15)',color:'#ff6584',whiteSpace:'nowrap'}
-  const m={arrive:['rgba(67,233,123,0.15)','#43e97b'],depart:['rgba(255,101,132,0.15)','#ff6584'],leave:['rgba(247,201,72,0.15)','#f7c948'],return:['rgba(167,139,250,0.15)','#a78bfa']}
-  const [bg,color]=m[type]||['rgba(107,107,138,0.2)','#6b6b8a']
-  return {display:'inline-block',padding:'2px 8px',borderRadius:20,fontSize:'0.7rem',background:bg,color,whiteSpace:'nowrap'}
+  if(type==='return'&&overdue) return {display:'inline-block',padding:'3px 10px',borderRadius:20,fontSize:'0.72rem',fontWeight:500,background:'#fee2e2',color:'#dc2626',whiteSpace:'nowrap'}
+  const m={arrive:['#dcfce7','#16a34a'],depart:['#fee2e2','#dc2626'],leave:['#fef3c7','#d97706'],return:['#ede9fe','#7c3aed']}
+  const [bg,color]=m[type]||['#f1f5f9','#64748b']
+  return {display:'inline-block',padding:'3px 10px',borderRadius:20,fontSize:'0.72rem',fontWeight:500,background:bg,color,whiteSpace:'nowrap'}
 }
 
 const S={
-  nav:{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'0 24px',height:64,borderBottom:'1px solid var(--border)',background:'rgba(10,10,15,0.95)',backdropFilter:'blur(12px)',position:'sticky',top:0,zIndex:100,fontFamily:'var(--font-mono)',gap:12},
-  brand:{fontFamily:'var(--font-head)',fontSize:'1rem',fontWeight:800,letterSpacing:'-0.02em',display:'flex',alignItems:'center',gap:8,flexShrink:0},
-  dot:{width:8,height:8,borderRadius:'50%',background:'var(--accent)',boxShadow:'0 0 12px var(--accent)'},
-  tabs:{display:'flex',gap:4,background:'var(--surface)',padding:3,borderRadius:10,border:'1px solid var(--border)'},
-  tab:{padding:'6px 14px',borderRadius:7,fontFamily:'var(--font-mono)',fontSize:'0.76rem',cursor:'pointer',border:'none',background:'transparent',color:'var(--muted)'},
-  tabOn:{background:'var(--accent)',color:'#fff',boxShadow:'0 0 16px rgba(108,99,255,0.4)'},
+  nav:{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'0 24px',height:64,borderBottom:'1px solid #e2e8f0',background:'#fff',position:'sticky',top:0,zIndex:100,fontFamily:"'Inter',sans-serif",gap:12,boxShadow:'0 1px 8px rgba(0,0,0,0.06)'},
+  brand:{fontFamily:"'Inter',sans-serif",fontSize:'1rem',fontWeight:800,display:'flex',alignItems:'center',gap:10,flexShrink:0},
+  dot:{width:8,height:8,borderRadius:'50%',background:'#1a6fe8'},
+  tabs:{display:'flex',gap:4,background:'#f1f5f9',padding:3,borderRadius:10,border:'1px solid #e2e8f0'},
+  tab:{padding:'6px 14px',borderRadius:7,fontFamily:"'Inter',sans-serif",fontSize:'0.76rem',fontWeight:500,cursor:'pointer',border:'none',background:'transparent',color:'#64748b'},
+  tabOn:{background:'#1a6fe8',color:'#fff',boxShadow:'0 2px 8px rgba(26,111,232,0.3)'},
   page:{position:'relative',zIndex:1,padding:'24px 24px 100px',maxWidth:1100,margin:'0 auto'},
-  h1:{fontFamily:'var(--font-head)',fontSize:'1.5rem',fontWeight:800,marginBottom:6},
-  sub:{fontSize:'0.76rem',color:'var(--muted)',marginBottom:24},
-  roomGrid:{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:12,marginBottom:22},
-  roomCard:{background:'var(--card)',border:'2px solid var(--border)',borderRadius:14,padding:16,cursor:'pointer',transition:'all .2s',textAlign:'center'},
-  roomOn:{borderColor:'var(--accent)',background:'rgba(108,99,255,0.1)',boxShadow:'0 0 20px rgba(108,99,255,0.2)'},
+  h1:{fontFamily:"'Inter',sans-serif",fontSize:'1.5rem',fontWeight:800,marginBottom:6,color:'#0f172a'},
+  sub:{fontSize:'0.78rem',color:'#64748b',marginBottom:24},
+  roomGrid:{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:14,marginBottom:24},
+  roomCard:{background:'#fff',border:'2px solid #e2e8f0',borderRadius:16,overflow:'hidden',cursor:'pointer',transition:'all .2s',boxShadow:'0 1px 4px rgba(0,0,0,0.04)'},
+  roomOn:{borderColor:'#1a6fe8',boxShadow:'0 4px 20px rgba(26,111,232,0.2)'},
   grid2:{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16},
-  card:{background:'var(--card)',border:'1px solid var(--border)',borderRadius:14,padding:22},
-  cardH:{fontFamily:'var(--font-head)',fontSize:'1rem',marginBottom:16},
-  sel:{width:'100%',padding:'11px 14px',background:'var(--surface)',border:'1px solid var(--border)',borderRadius:10,color:'var(--text)',fontFamily:'var(--font-mono)',fontSize:'16px',marginBottom:12,cursor:'pointer'},
-  btn:{width:'100%',padding:14,borderRadius:12,border:'none',fontFamily:'var(--font-head)',fontWeight:700,fontSize:'0.95rem',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',gap:8,transition:'all .2s'},
-  logBox:{background:'var(--surface)',border:'1px solid var(--border)',borderRadius:10,padding:12,maxHeight:200,overflowY:'auto'},
-  logRow:{display:'flex',alignItems:'flex-start',gap:8,padding:'6px 0',borderBottom:'1px solid var(--border)',fontSize:'0.75rem'},
+  card:{background:'#fff',border:'1px solid #e2e8f0',borderRadius:16,padding:22,boxShadow:'0 1px 4px rgba(0,0,0,0.04)'},
+  cardH:{fontFamily:"'Inter',sans-serif",fontSize:'1rem',fontWeight:700,marginBottom:16,color:'#0f172a'},
+  sel:{width:'100%',padding:'11px 14px',background:'#fff',border:'1.5px solid #e2e8f0',borderRadius:10,color:'#0f172a',fontFamily:"'Inter',sans-serif",fontSize:'16px',marginBottom:12,cursor:'pointer',outline:'none'},
+  btn:{width:'100%',padding:14,borderRadius:12,border:'none',fontFamily:"'Inter',sans-serif",fontWeight:700,fontSize:'0.95rem',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',gap:8,transition:'all .2s'},
+  logBox:{background:'#f8fafc',border:'1px solid #e2e8f0',borderRadius:10,padding:12,maxHeight:200,overflowY:'auto'},
+  logRow:{display:'flex',alignItems:'flex-start',gap:8,padding:'6px 0',borderBottom:'1px solid #f1f5f9',fontSize:'0.75rem'},
   filters:{display:'flex',gap:10,marginBottom:20,flexWrap:'wrap',alignItems:'center'},
-  exportBtn:{padding:'10px 16px',background:'var(--accent)',color:'#fff',border:'none',borderRadius:8,fontFamily:'var(--font-head)',fontWeight:700,cursor:'pointer',fontSize:'0.8rem',whiteSpace:'nowrap'},
+  exportBtn:{padding:'10px 16px',background:'#1a6fe8',color:'#fff',border:'none',borderRadius:8,fontFamily:"'Inter',sans-serif",fontWeight:600,cursor:'pointer',fontSize:'0.82rem',whiteSpace:'nowrap'},
   statsGrid:{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:12,marginBottom:20},
-  statCard:{background:'var(--card)',border:'1px solid var(--border)',borderRadius:12,padding:16},
-  fpOv:{position:'fixed',inset:0,background:'rgba(0,0,0,0.88)',zIndex:300,display:'flex',alignItems:'center',justifyContent:'center',flexDirection:'column',gap:20},
-  fpCircle:{width:110,height:110,borderRadius:'50%',border:'3px solid var(--accent)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:'3rem',boxShadow:'0 0 40px rgba(108,99,255,0.5)'},
-  modalBg:{position:'fixed',inset:0,background:'rgba(0,0,0,0.75)',backdropFilter:'blur(4px)',zIndex:200,display:'flex',alignItems:'center',justifyContent:'center',padding:16},
-  modal:{background:'var(--card)',border:'1px solid var(--border)',borderRadius:18,padding:24,width:400,maxWidth:'100%'},
-  toast:{position:'fixed',bottom:80,right:16,zIndex:999,background:'var(--card)',border:'1px solid',borderRadius:12,padding:'12px 18px',fontSize:'0.82rem',maxWidth:'calc(100vw - 32px)',fontFamily:'var(--font-mono)'},
-  warnBox:{fontSize:'0.78rem',color:'var(--gold)',marginBottom:12,padding:'8px 12px',background:'rgba(247,201,72,0.1)',borderRadius:8},
-  inputLabel:{fontSize:'0.72rem',color:'var(--muted)',marginBottom:5},
-  adminInput:{background:'var(--surface)',border:'1px solid var(--border)',borderRadius:8,color:'var(--text)',fontFamily:'var(--font-mono)',fontSize:'16px',padding:'11px 14px',width:'100%',outline:'none'},
+  statCard:{background:'#fff',border:'1px solid #e2e8f0',borderRadius:12,padding:16,boxShadow:'0 1px 4px rgba(0,0,0,0.04)'},
+  fpOv:{position:'fixed',inset:0,background:'rgba(15,23,42,0.85)',zIndex:300,display:'flex',alignItems:'center',justifyContent:'center',flexDirection:'column',gap:20,backdropFilter:'blur(4px)'},
+  fpCircle:{width:110,height:110,borderRadius:'50%',border:'3px solid #1a6fe8',display:'flex',alignItems:'center',justifyContent:'center',fontSize:'3rem',background:'#e8f1fd'},
+  modalBg:{position:'fixed',inset:0,background:'rgba(15,23,42,0.6)',backdropFilter:'blur(4px)',zIndex:200,display:'flex',alignItems:'center',justifyContent:'center',padding:16},
+  modal:{background:'#fff',border:'1px solid #e2e8f0',borderRadius:20,padding:24,width:420,maxWidth:'100%',boxShadow:'0 20px 60px rgba(0,0,0,0.15)'},
+  toast:{position:'fixed',bottom:80,right:16,zIndex:999,background:'#fff',border:'1px solid',borderRadius:12,padding:'12px 18px',fontSize:'0.82rem',maxWidth:'calc(100vw - 32px)',fontFamily:"'Inter',sans-serif",boxShadow:'0 4px 20px rgba(0,0,0,0.12)'},
+  warnBox:{fontSize:'0.78rem',color:'#d97706',marginBottom:12,padding:'8px 12px',background:'#fef3c7',borderRadius:8,border:'1px solid #fde68a'},
+  inputLabel:{fontSize:'0.75rem',fontWeight:600,color:'#374151',marginBottom:5},
+  adminInput:{background:'#fff',border:'1.5px solid #e2e8f0',borderRadius:10,color:'#0f172a',fontFamily:"'Inter',sans-serif",fontSize:'16px',padding:'11px 14px',width:'100%',outline:'none'},
 }
