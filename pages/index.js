@@ -165,6 +165,10 @@ export default function Home() {
   // Admin: edit PIN
   const [editPinId, setEditPinId]   = useState(null)
   const [editPinVal, setEditPinVal] = useState('')
+  const [archiveModal, setArchiveM] = useState(false)
+  const [archivePeriod, setArchivePeriod] = useState('1') // months
+  const [archiveCount, setArchiveCount] = useState(0)
+  const [archiveLoading, setArchiveLoading] = useState(false)
 
   // ── Auth guard ────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -393,6 +397,58 @@ export default function Home() {
     } else {
       showToast(`✅ ${emp.name} returned on time (${actualMinutes} min)`)
     }
+  }
+
+  // ── Archive: count old records ──────────────────────────────────────────────
+  async function countOldRecords(months) {
+    const cutoff = new Date()
+    cutoff.setMonth(cutoff.getMonth() - parseInt(months))
+    const cutoffStr = cutoff.toISOString().split('T')[0]
+    const snap = await getDocs(collection(db,'records'))
+    const old = snap.docs.filter(d => (d.data().date||'') < cutoffStr)
+    return { docs: old, cutoffStr }
+  }
+
+  async function openArchiveModal() {
+    setArchiveLoading(true); setArchiveM(true)
+    const { docs } = await countOldRecords(archivePeriod)
+    setArchiveCount(docs.length); setArchiveLoading(false)
+  }
+
+  async function handleArchivePeriodChange(months) {
+    setArchivePeriod(months); setArchiveLoading(true)
+    const { docs } = await countOldRecords(months)
+    setArchiveCount(docs.length); setArchiveLoading(false)
+  }
+
+  async function exportAndDeleteOldRecords() {
+    setArchiveLoading(true)
+    try {
+      const { docs, cutoffStr } = await countOldRecords(archivePeriod)
+      if (docs.length === 0) { showToast('No records found for this period.','info'); setArchiveM(false); setArchiveLoading(false); return }
+
+      // Step 1: Export to CSV first
+      const rows = [['Employee','Showroom','Type','Time','Date','Reason','Duration(min)','Overdue']]
+      docs.forEach(d => {
+        const r = d.data()
+        rows.push([r.empName||'',r.showroom||'',r.type||'',r.time||'',r.date||'',r.reason||'',r.duration||'',r.overdue?'Yes':'No'])
+      })
+      const csv = rows.map(r=>r.map(c=>`"${c}"`).join(',')).join('
+')
+      const a = document.createElement('a')
+      a.href = 'data:text/csv;charset=utf-8,' + encodeURIComponent(csv)
+      a.download = `idealz-archive-before-${cutoffStr}.csv`
+      a.click()
+
+      // Step 2: Delete from Firebase
+      await Promise.all(docs.map(d => deleteDoc(doc(db,'records',d.id))))
+
+      showToast(`✅ Exported & deleted ${docs.length} records older than ${archivePeriod} month(s)`)
+      setArchiveM(false)
+    } catch(e) {
+      showToast('Error during archive. Try again.','error')
+    }
+    setArchiveLoading(false)
   }
 
   async function loadReports() {
@@ -831,6 +887,19 @@ export default function Home() {
                 </div>
               ))}
             </div>
+
+            {/* Archive Section */}
+            <div style={{marginTop:20,padding:16,background:'rgba(255,101,132,0.05)',border:'1px solid rgba(255,101,132,0.2)',borderRadius:12}}>
+              <h3 style={{fontFamily:'var(--font-head)',fontSize:'0.95rem',marginBottom:8,color:'var(--accent2)'}}>🗂️ Archive Old Records</h3>
+              <div style={{fontSize:'0.72rem',color:'var(--muted)',marginBottom:12,lineHeight:1.5}}>
+                Export attendance records to CSV then permanently delete them from the database. Use this to keep the database clean.
+              </div>
+              <button
+                style={{width:'100%',padding:'10px',background:'rgba(255,101,132,0.1)',border:'1px solid rgba(255,101,132,0.3)',borderRadius:8,color:'var(--accent2)',fontSize:'0.8rem',cursor:'pointer',fontFamily:'var(--font-head)',fontWeight:700}}
+                onClick={openArchiveModal}>
+                📦 Export & Delete Old Records
+              </button>
+            </div>
           </div>
         </div>
       </div>}
@@ -918,6 +987,66 @@ export default function Home() {
             <div style={{display:'flex',gap:10}}>
               <button style={{padding:'12px 16px',background:'transparent',color:'var(--muted)',border:'1px solid var(--border)',borderRadius:8,cursor:'pointer',fontFamily:'var(--font-mono)'}} onClick={()=>setReturnM(false)}>Cancel</button>
               <button style={{...S.btn,flex:1,background:'linear-gradient(135deg,#6c63ff,#a78bfa)',color:'#fff',padding:12}} onClick={submitReturn}>👤 Face ID — I'm Back</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Archive Modal */}
+      {archiveModal&&(
+        <div style={S.modalBg} onClick={e=>e.target===e.currentTarget&&setArchiveM(false)}>
+          <div className="modal-box" style={S.modal}>
+            <h3 style={{fontFamily:'var(--font-head)',fontSize:'1.1rem',marginBottom:6,color:'var(--accent2)'}}>🗂️ Export & Delete Old Records</h3>
+            <div style={{fontSize:'0.74rem',color:'var(--muted)',marginBottom:20,lineHeight:1.6}}>
+              This will <strong style={{color:'var(--text)'}}>first download a CSV backup</strong>, then permanently delete the selected records from Firebase. This cannot be undone.
+            </div>
+
+            <div style={{marginBottom:16}}>
+              <div style={S.inputLabel}>Delete records older than</div>
+              <select
+                value={archivePeriod}
+                onChange={e=>handleArchivePeriodChange(e.target.value)}
+                style={S.adminInput}>
+                <option value="1">1 month</option>
+                <option value="2">2 months</option>
+                <option value="3">3 months</option>
+                <option value="6">6 months</option>
+                <option value="12">1 year</option>
+              </select>
+            </div>
+
+            {/* Record count preview */}
+            <div style={{padding:'14px 16px',background:'var(--surface)',borderRadius:10,border:'1px solid var(--border)',marginBottom:20,textAlign:'center'}}>
+              {archiveLoading
+                ? <div style={{fontSize:'0.82rem',color:'var(--muted)'}}>Counting records…</div>
+                : archiveCount===0
+                  ? <div style={{fontSize:'0.82rem',color:'var(--accent3)'}}>✅ No records found older than {archivePeriod} month(s)</div>
+                  : <>
+                    <div style={{fontFamily:'var(--font-head)',fontSize:'2rem',fontWeight:800,color:'var(--accent2)'}}>{archiveCount}</div>
+                    <div style={{fontSize:'0.76rem',color:'var(--muted)',marginTop:4}}>records will be exported & deleted</div>
+                  </>
+              }
+            </div>
+
+            {/* Warning */}
+            {archiveCount>0&&(
+              <div style={{padding:'10px 14px',background:'rgba(255,101,132,0.08)',border:'1px solid rgba(255,101,132,0.2)',borderRadius:8,fontSize:'0.74rem',color:'var(--accent2)',marginBottom:16,lineHeight:1.5}}>
+                ⚠️ A CSV file will download automatically first. Make sure to save it before confirming deletion.
+              </div>
+            )}
+
+            <div style={{display:'flex',gap:10}}>
+              <button
+                style={{padding:'12px 16px',background:'transparent',color:'var(--muted)',border:'1px solid var(--border)',borderRadius:8,cursor:'pointer',fontFamily:'var(--font-mono)'}}
+                onClick={()=>setArchiveM(false)}>
+                Cancel
+              </button>
+              <button
+                style={{...S.btn,flex:1,background:archiveCount>0?'var(--accent2)':'var(--border)',color:'#fff',padding:12,opacity:archiveLoading||archiveCount===0?0.5:1}}
+                onClick={exportAndDeleteOldRecords}
+                disabled={archiveLoading||archiveCount===0}>
+                {archiveLoading?'Processing…':`⬇ Export & Delete ${archiveCount} Records`}
+              </button>
             </div>
           </div>
         </div>
