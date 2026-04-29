@@ -15,11 +15,12 @@ const SHIFTS = {
   'Idealz Libert Plaza': { showroom:{ start:'10:00', end:'19:00' } },
   'Idealz Prime':        { showroom:{ start:'09:45', end:'19:30' }, backoffice:{ start:'09:30', end:'18:30' } },
 }
-// ── GPS Coordinates for each showroom (50m radius) ──────────────────────────
+// ── GPS Coordinates for each showroom ────────────────────────────────────────
+// Radius is 150m because indoor mall GPS can drift 50-100m
 const SHOWROOM_LOCATIONS = {
-  'Idealz Marino':       { lat: 6.9044,    lng: 79.8553,   radius: 50 },
-  'Idealz Libert Plaza': { lat: 6.9112649, lng: 79.8515544, radius: 50 },
-  'Idealz Prime':        { lat: 6.8912671, lng: 79.8560789, radius: 50 },
+  'Idealz Marino':       { lat: 6.900183,  lng: 79.852234,  radius: 50 },
+  'Idealz Libert Plaza': { lat: 6.911688,  lng: 79.851517,  radius: 50 },
+  'Idealz Prime':        { lat: 6.8912695, lng: 79.8560961, radius: 50 },
 }
 
 // Haversine formula — distance between two GPS points in meters
@@ -39,23 +40,53 @@ function checkInsideShowroom(showroom, userLat, userLng) {
   if (!loc) return { allowed: true, distance: 0, message: '' }
   const dist = Math.round(getDistance(loc.lat, loc.lng, userLat, userLng))
   if (dist <= loc.radius) {
-    return { allowed: true, distance: dist, message: `✅ You are inside ${showroom} (${dist}m)` }
+    return { allowed: true, distance: dist, message: `✅ You are inside ${showroom} (${dist}m away)` }
   }
-  return { allowed: false, distance: dist, message: `❌ You are ${dist}m away from ${showroom}. You must be within 50m to check in.` }
+  return { allowed: false, distance: dist, message: `❌ You are ${dist}m away from ${showroom}. Please move closer to the showroom entrance.` }
 }
 
-// Get current GPS position as a Promise
+// Get current GPS position with multiple readings for better accuracy
 function getCurrentPosition() {
   return new Promise((resolve, reject) => {
     if (!navigator.geolocation) {
       reject(new Error('GPS not supported on this device'))
       return
     }
-    navigator.geolocation.getCurrentPosition(
-      pos => resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude, accuracy: pos.coords.accuracy }),
-      err => reject(err),
-      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
-    )
+    // Take 3 readings and use the most accurate one
+    const readings = []
+    let attempts = 0
+    const maxAttempts = 3
+
+    function tryGet() {
+      navigator.geolocation.getCurrentPosition(
+        pos => {
+          readings.push({
+            lat: pos.coords.latitude,
+            lng: pos.coords.longitude,
+            accuracy: pos.coords.accuracy
+          })
+          attempts++
+          if (attempts < maxAttempts && pos.coords.accuracy > 30) {
+            // If accuracy is poor, try again
+            setTimeout(tryGet, 1000)
+          } else {
+            // Use the reading with best accuracy
+            const best = readings.sort((a,b) => a.accuracy - b.accuracy)[0]
+            resolve(best)
+          }
+        },
+        err => {
+          if (readings.length > 0) {
+            // Use what we have if we got at least one reading
+            resolve(readings.sort((a,b) => a.accuracy - b.accuracy)[0])
+          } else {
+            reject(err)
+          }
+        },
+        { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
+      )
+    }
+    tryGet()
   })
 }
 
