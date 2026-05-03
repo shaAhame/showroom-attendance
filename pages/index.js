@@ -819,7 +819,13 @@ export default function Home() {
 
           {/* Employee list */}
           <div className="card-pad" style={S.card}>
-            <h3 style={S.cardH}>👥 All Employees ({employees.length})</h3>
+            <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:12}}>
+              <h3 style={{...S.cardH,marginBottom:0}}>👥 Employees ({employees.filter(e=>{
+                const ms=!empSearch||e.name.toLowerCase().includes(empSearch.toLowerCase())||e.empId.toLowerCase().includes(empSearch.toLowerCase())
+                const mf=empFilter==='all'||e.showroom===empFilter
+                return ms&&mf
+              }).length} / {employees.length})</h3>
+            </div>
             <input
               placeholder="🔍 Search name or ID..."
               value={empSearch}
@@ -838,7 +844,7 @@ export default function Home() {
                 </button>
               ))}
             </div>
-            <div style={{display:'flex',flexDirection:'column',gap:8,maxHeight:600,overflowY:'auto',paddingRight:2}}>
+            <div style={{display:'flex',flexDirection:'column',gap:8}}>
               {employees.filter(e=>{
                 const matchSearch = !empSearch || e.name.toLowerCase().includes(empSearch.toLowerCase()) || e.empId.toLowerCase().includes(empSearch.toLowerCase())
                 const matchFilter = empFilter==='all' || e.showroom===empFilter
@@ -851,7 +857,7 @@ export default function Home() {
                 const shift=getShift(e.showroom,e.staffType)
                 const isEditing = editPinId===e.id
                 return (
-                  <div key={e.id} style={{background:'#fff',borderRadius:12,border:'1px solid #e2e8f0',overflow:'hidden',boxShadow:'0 1px 3px rgba(0,0,0,0.04)'}}>
+                  <div key={e.id} style={{background:'#fff',borderRadius:12,border:'1px solid #e2e8f0',boxShadow:'0 1px 3px rgba(0,0,0,0.04)'}}>
                     {/* Top row: avatar + info + status */}
                     <div style={{display:'flex',alignItems:'center',gap:10,padding:'12px 14px'}}>
                       <div style={{width:38,height:38,borderRadius:'50%',background:e.color+'22',color:e.color,display:'flex',alignItems:'center',justifyContent:'center',fontWeight:700,fontSize:'0.82rem',flexShrink:0}}>{initials(e.name)}</div>
