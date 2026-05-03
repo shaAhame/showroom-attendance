@@ -851,30 +851,32 @@ export default function Home() {
                 const shift=getShift(e.showroom,e.staffType)
                 const isEditing = editPinId===e.id
                 return (
-                  <div key={e.id} style={{background:'var(--surface)',borderRadius:10,border:'1px solid var(--border)',overflow:'hidden'}}>
-                    <div style={{display:'flex',alignItems:'center',gap:10,padding:'10px 12px'}}>
-                      <div style={{width:36,height:36,borderRadius:'50%',background:e.color+'22',color:e.color,display:'flex',alignItems:'center',justifyContent:'center',fontWeight:700,fontSize:'0.78rem',flexShrink:0}}>{initials(e.name)}</div>
+                  <div key={e.id} style={{background:'#fff',borderRadius:12,border:'1px solid #e2e8f0',overflow:'hidden',boxShadow:'0 1px 3px rgba(0,0,0,0.04)'}}>
+                    {/* Top row: avatar + info + status */}
+                    <div style={{display:'flex',alignItems:'center',gap:10,padding:'12px 14px'}}>
+                      <div style={{width:38,height:38,borderRadius:'50%',background:e.color+'22',color:e.color,display:'flex',alignItems:'center',justifyContent:'center',fontWeight:700,fontSize:'0.82rem',flexShrink:0}}>{initials(e.name)}</div>
                       <div style={{flex:1,minWidth:0}}>
-                        <div style={{fontSize:'0.82rem',fontWeight:500,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{e.name}</div>
-                        <div style={{fontSize:'0.68rem',color:'var(--muted)'}}>{e.empId} · {e.showroom.replace('Idealz ','')} · <span style={{color:roleColor[e.role]||'var(--muted)'}}>{ROLE_LABELS[e.role]||e.role}</span></div>
-                        <div style={{fontSize:'0.64rem',color:'var(--muted)'}}>{shift.start}–{shift.end} · PIN: {'•'.repeat(e.pin?.length||4)}</div>
+                        <div style={{fontSize:'0.85rem',fontWeight:600,color:'#0f172a',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{e.name}</div>
+                        <div style={{fontSize:'0.7rem',color:'#64748b'}}>{e.empId} · {e.showroom.replace('Idealz ','')} · <span style={{color:roleColor[e.role]||'#64748b',fontWeight:500}}>{ROLE_LABELS[e.role]||e.role}</span></div>
                       </div>
-                      <span style={{fontSize:'0.66rem',color:clr,background:clr+'22',padding:'2px 7px',borderRadius:20,whiteSpace:'nowrap',flexShrink:0}}>{lbl}</span>
+                      <span style={{fontSize:'0.68rem',color:clr,background:clr+'22',padding:'3px 8px',borderRadius:20,whiteSpace:'nowrap',flexShrink:0,fontWeight:500}}>{lbl}</span>
                     </div>
-                    {/* Actions row */}
-                    <div style={{display:'flex',gap:6,padding:'6px 12px 10px',borderTop:'1px solid var(--border)'}}>
-                      <button onClick={()=>{ setEditPinId(isEditing?null:e.id); setEditPinVal('') }}
-                        style={{flex:1,padding:'6px 10px',background:'#e8f1fd',border:'1px solid #bfdbfe',borderRadius:6,color:'#1456b8',fontSize:'0.75rem',cursor:'pointer',fontWeight:600,fontFamily:"'Inter',sans-serif"}}>
-                        {isEditing?'✕ Cancel':'🔑 Change PIN'}
+                    {/* Action buttons — always visible */}
+                    <div style={{display:'flex',flexDirection:'row',borderTop:'1px solid #f1f5f9',width:'100%'}}>
+                      <button
+                        onClick={()=>{ setEditPinId(isEditing?null:e.id); setEditPinVal('') }}
+                        style={{flex:1,padding:'10px 8px',background:isEditing?'#fef3c7':'#f8fafc',border:'none',borderRight:'1px solid #e2e8f0',color:isEditing?'#92400e':'#1456b8',fontSize:'0.78rem',cursor:'pointer',fontWeight:600,fontFamily:"'Inter',sans-serif",textAlign:'center'}}>
+                        🔑 {isEditing?'Cancel':'Change PIN'}
                       </button>
-                      <button onClick={()=>{ if(window.confirm(`Delete ${e.name}?`)) removeEmployee(e.id,e.name) }}
-                        style={{padding:'6px 14px',background:'#fee2e2',border:'1px solid #fca5a5',borderRadius:6,color:'#dc2626',fontSize:'0.75rem',cursor:'pointer',fontWeight:600,fontFamily:"'Inter',sans-serif",whiteSpace:'nowrap'}}>
+                      <button
+                        onClick={()=>{ if(window.confirm('Delete '+e.name+'? This cannot be undone.')) removeEmployee(e.id,e.name) }}
+                        style={{flex:1,padding:'10px 8px',background:'#fff5f5',border:'none',color:'#dc2626',fontSize:'0.78rem',cursor:'pointer',fontWeight:600,fontFamily:"'Inter',sans-serif",textAlign:'center'}}>
                         🗑️ Delete
                       </button>
                     </div>
-                    {/* PIN edit inline */}
+                    {/* PIN edit - shows when Change PIN clicked */}
                     {isEditing && (
-                      <div style={{padding:'0 12px 12px',display:'flex',gap:8,alignItems:'center'}}>
+                      <div style={{padding:'10px 14px',background:'#fffbeb',borderTop:'1px solid #fde68a',display:'flex',gap:8,alignItems:'center'}}>
                         <input
                           type="password"
                           inputMode="numeric"
@@ -882,11 +884,11 @@ export default function Home() {
                           value={editPinVal}
                           onChange={e=>setEditPinVal(e.target.value.replace(/\D/g,'').slice(0,6))}
                           maxLength={6}
-                          style={{flex:1,padding:'8px 12px',background:'var(--bg)',border:'1px solid var(--border)',borderRadius:6,color:'var(--text)',fontFamily:'var(--font-mono)',fontSize:'14px',outline:'none'}}
+                          style={{flex:1,padding:'8px 12px',background:'#fff',border:'1.5px solid #fde68a',borderRadius:8,color:'#0f172a',fontFamily:"'Inter',sans-serif",fontSize:'14px',outline:'none'}}
                         />
                         <button onClick={()=>savePinEdit(e.id)}
-                          style={{padding:'8px 14px',background:'var(--accent)',border:'none',borderRadius:6,color:'#fff',fontSize:'0.72rem',cursor:'pointer',fontWeight:700}}>
-                          Save
+                          style={{padding:'8px 16px',background:'#1a6fe8',border:'none',borderRadius:8,color:'#fff',fontSize:'0.78rem',cursor:'pointer',fontWeight:700,fontFamily:"'Inter',sans-serif",whiteSpace:'nowrap'}}>
+                          ✓ Save
                         </button>
                       </div>
                     )}
