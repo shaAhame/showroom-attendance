@@ -196,6 +196,8 @@ export default function Home() {
   // Admin: edit PIN
   const [editPinId, setEditPinId]   = useState(null)
   const [editPinVal, setEditPinVal] = useState('')
+  const [empSearch, setEmpSearch]   = useState('')
+  const [empFilter, setEmpFilter]   = useState('all')
   const [archiveModal, setArchiveM] = useState(false)
   const [archivePeriod, setArchivePeriod] = useState('1') // months
   const [archiveCount, setArchiveCount] = useState(0)
@@ -818,8 +820,30 @@ export default function Home() {
           {/* Employee list */}
           <div className="card-pad" style={S.card}>
             <h3 style={S.cardH}>👥 All Employees ({employees.length})</h3>
-            <div style={{display:'flex',flexDirection:'column',gap:8,maxHeight:520,overflowY:'auto'}}>
-              {employees.map(e=>{
+            <input
+              placeholder="🔍 Search name or ID..."
+              value={empSearch}
+              onChange={e=>setEmpSearch(e.target.value)}
+              style={{width:'100%',padding:'9px 12px',background:'#f8fafc',border:'1.5px solid #e2e8f0',borderRadius:8,fontSize:'14px',marginBottom:10,outline:'none',fontFamily:"'Inter',sans-serif",color:'#0f172a'}}
+            />
+            <div style={{display:'flex',gap:6,marginBottom:10,flexWrap:'wrap'}}>
+              {['All',...SHOWROOMS.map(s=>s.replace('Idealz ',''))].map((f,i)=>(
+                <button key={f} onClick={()=>setEmpFilter(i===0?'all':SHOWROOMS[i-1])}
+                  style={{padding:'4px 12px',borderRadius:20,border:'1px solid',fontSize:'0.72rem',cursor:'pointer',fontFamily:"'Inter',sans-serif",fontWeight:500,
+                    borderColor:empFilter===(i===0?'all':SHOWROOMS[i-1])?'#1a6fe8':'#e2e8f0',
+                    background:empFilter===(i===0?'all':SHOWROOMS[i-1])?'#e8f1fd':'#fff',
+                    color:empFilter===(i===0?'all':SHOWROOMS[i-1])?'#1a6fe8':'#64748b',
+                  }}>
+                  {f}
+                </button>
+              ))}
+            </div>
+            <div style={{display:'flex',flexDirection:'column',gap:8,maxHeight:600,overflowY:'auto',paddingRight:2}}>
+              {employees.filter(e=>{
+                const matchSearch = !empSearch || e.name.toLowerCase().includes(empSearch.toLowerCase()) || e.empId.toLowerCase().includes(empSearch.toLowerCase())
+                const matchFilter = empFilter==='all' || e.showroom===empFilter
+                return matchSearch && matchFilter
+              }).map(e=>{
                 const recs=todayRecs.filter(r=>r.empId===e.empId)
                 const last=[...recs].sort((a,b)=>(b.createdAt||0)-(a.createdAt||0))[0]
                 const sm={arrive:['Present','#43e97b'],depart:['Departed','#ff6584'],leave:['On Leave','#f7c948'],return:['Returned','#6c63ff']}
@@ -840,12 +864,12 @@ export default function Home() {
                     {/* Actions row */}
                     <div style={{display:'flex',gap:6,padding:'6px 12px 10px',borderTop:'1px solid var(--border)'}}>
                       <button onClick={()=>{ setEditPinId(isEditing?null:e.id); setEditPinVal('') }}
-                        style={{flex:1,padding:'6px',background:'rgba(108,99,255,0.1)',border:'1px solid rgba(108,99,255,0.3)',borderRadius:6,color:'var(--accent)',fontSize:'0.7rem',cursor:'pointer'}}>
-                        {isEditing?'Cancel':'🔑 Change PIN'}
+                        style={{flex:1,padding:'6px 10px',background:'#e8f1fd',border:'1px solid #bfdbfe',borderRadius:6,color:'#1456b8',fontSize:'0.75rem',cursor:'pointer',fontWeight:600,fontFamily:"'Inter',sans-serif"}}>
+                        {isEditing?'✕ Cancel':'🔑 Change PIN'}
                       </button>
-                      <button onClick={()=>removeEmployee(e.id,e.name)}
-                        style={{padding:'6px 10px',background:'rgba(255,101,132,0.1)',border:'1px solid rgba(255,101,132,0.2)',borderRadius:6,color:'var(--accent2)',fontSize:'0.7rem',cursor:'pointer'}}>
-                        🗑️
+                      <button onClick={()=>{ if(window.confirm(`Delete ${e.name}?`)) removeEmployee(e.id,e.name) }}
+                        style={{padding:'6px 14px',background:'#fee2e2',border:'1px solid #fca5a5',borderRadius:6,color:'#dc2626',fontSize:'0.75rem',cursor:'pointer',fontWeight:600,fontFamily:"'Inter',sans-serif",whiteSpace:'nowrap'}}>
+                        🗑️ Delete
                       </button>
                     </div>
                     {/* PIN edit inline */}
