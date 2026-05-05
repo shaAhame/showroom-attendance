@@ -45,48 +45,60 @@ function checkInsideShowroom(showroom, userLat, userLng) {
   return { allowed: false, distance: dist, message: `❌ You are ${dist}m away from ${showroom}. Please move closer to the showroom entrance.` }
 }
 
-// Get current GPS position with multiple readings for better accuracy
+// Get current GPS position — fast single reading, no cache
 function getCurrentPosition() {
   return new Promise((resolve, reject) => {
     if (!navigator.geolocation) {
       reject(new Error('GPS not supported on this device'))
       return
     }
-    // Take 3 readings and use the most accurate one
-    const readings = []
-    let attempts = 0
-    const maxAttempts = 3
 
-    function tryGet() {
-      navigator.geolocation.getCurrentPosition(
-        pos => {
-          readings.push({
-            lat: pos.coords.latitude,
-            lng: pos.coords.longitude,
-            accuracy: pos.coords.accuracy
-          })
-          attempts++
-          if (attempts < maxAttempts && pos.coords.accuracy > 30) {
-            // If accuracy is poor, try again
-            setTimeout(tryGet, 1000)
-          } else {
-            // Use the reading with best accuracy
-            const best = readings.sort((a,b) => a.accuracy - b.accuracy)[0]
-            resolve(best)
-          }
-        },
-        err => {
-          if (readings.length > 0) {
-            // Use what we have if we got at least one reading
-            resolve(readings.sort((a,b) => a.accuracy - b.accuracy)[0])
-          } else {
-            reject(err)
-          }
-        },
-        { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
-      )
-    }
-    tryGet()
+    let resolved = false
+
+    // Primary: fresh high-accuracy reading (no cache — maximumAge:0)
+    navigator.geolocation.getCurrentPosition(
+      pos => {
+        if (resolved) return
+        resolved = true
+        resolve({
+          lat:      pos.coords.latitude,
+          lng:      pos.coords.longitude,
+          accuracy: pos.coords.accuracy
+        })
+      },
+      err => {
+        if (resolved) return
+        // If high accuracy fails, try low accuracy as fallback
+        navigator.geolocation.getCurrentPosition(
+          pos => {
+            if (resolved) return
+            resolved = true
+            resolve({
+              lat:      pos.coords.latitude,
+              lng:      pos.coords.longitude,
+              accuracy: pos.coords.accuracy
+            })
+          },
+          err2 => {
+            if (!resolved) reject(err2)
+          },
+          { enableHighAccuracy: false, timeout: 8000, maximumAge: 0 }
+        )
+      },
+      {
+        enableHighAccuracy: true,
+        timeout: 10000,
+        maximumAge: 0  // NEVER use cached location — always get fresh GPS
+      }
+    )
+
+    // Safety timeout — if GPS takes more than 12 seconds, reject
+    setTimeout(() => {
+      if (!resolved) {
+        resolved = true
+        reject(new Error('GPS timeout — please try again'))
+      }
+    }, 12000)
   })
 }
 
@@ -291,11 +303,26 @@ export default function Home() {
     const emp = employees.find(e=>e.id===eid) || employees[0]
     if (!emp) return showToast('Employee not found.','error')
 
-    // ── Check: prevent duplicate arrive/depart same day ────────────────────
-    const alreadyDone = todayRecs.find(r => r.empId === emp.empId && r.type === type)
-    if (alreadyDone) {
-      const label = type === 'arrive' ? 'Arrival' : 'Departure'
-      return showToast(`❌ ${emp.name} already recorded ${label} today at ${alreadyDone.time}`, 'error')
+    // ── Check Firebase directly for duplicate (not local state) ─────────────
+    try {
+      const dupCheck = await getDocs(query(
+        collection(db,'records'),
+        where('empId','==',emp.empId),
+        where('date','==',today()),
+        where('type','==',type)
+      ))
+      if (!dupCheck.empty) {
+        const existingTime = dupCheck.docs[0].data().time
+        const label = type === 'arrive' ? 'Arrival' : 'Departure'
+        return showToast(`❌ ${emp.name} already recorded ${label} today at ${existingTime}`, 'error')
+      }
+    } catch(err) {
+      // fallback to local check if Firebase query fails
+      const alreadyDone = todayRecs.find(r => r.empId === emp.empId && r.type === type)
+      if (alreadyDone) {
+        const label = type === 'arrive' ? 'Arrival' : 'Departure'
+        return showToast(`❌ ${emp.name} already recorded ${label} today at ${alreadyDone.time}`, 'error')
+      }
     }
 
     // ── Step 1: GPS Location Check ──────────────────────────────────────────
@@ -313,14 +340,16 @@ export default function Home() {
       setGpsStatus('ok')
     } catch(e) {
       setGpsStatus('fail')
-      if (e.code === 1) { // Permission denied
-        showToast('❌ Location access denied. Please allow GPS in your browser settings.','error')
+      if (e.code === 1) {
+        showToast('❌ Location permission denied. Go to browser Settings → Allow Location.','error')
       } else if (e.code === 2) {
-        showToast('❌ GPS signal not available. Try moving near a window.','error')
+        showToast('❌ GPS signal weak. Move to an open area and try again.','error')
+      } else if (e.message && e.message.includes('timeout')) {
+        showToast('❌ GPS timed out. Make sure Location is ON and try again.','error')
       } else {
-        showToast('❌ Could not get your location. Please try again.','error')
+        showToast('❌ Could not get location. Check your GPS is turned ON.','error')
       }
-      setTimeout(()=>setGpsStatus(''), 3000)
+      setTimeout(()=>setGpsStatus(''), 4000)
       return
     }
 
@@ -362,8 +391,14 @@ export default function Home() {
       setGpsStatus('ok')
     } catch(e) {
       setGpsStatus('fail')
-      showToast('❌ Could not get your location. Please allow GPS access.','error')
-      setTimeout(()=>setGpsStatus(''),3000)
+      if (e.code === 1) {
+        showToast('❌ Location permission denied. Go to Settings → Allow Location.','error')
+      } else if (e.message && e.message.includes('timeout')) {
+        showToast('❌ GPS timed out. Make sure Location is ON and try again.','error')
+      } else {
+        showToast('❌ Could not get location. Check your GPS is turned ON.','error')
+      }
+      setTimeout(()=>setGpsStatus(''),4000)
       return
     }
 
@@ -402,8 +437,14 @@ export default function Home() {
       setGpsStatus('ok')
     } catch(e) {
       setGpsStatus('fail')
-      showToast('❌ Could not get your location. Please allow GPS access.','error')
-      setTimeout(()=>setGpsStatus(''),3000)
+      if (e.code === 1) {
+        showToast('❌ Location permission denied. Go to Settings → Allow Location.','error')
+      } else if (e.message && e.message.includes('timeout')) {
+        showToast('❌ GPS timed out. Make sure Location is ON and try again.','error')
+      } else {
+        showToast('❌ Could not get location. Check your GPS is turned ON.','error')
+      }
+      setTimeout(()=>setGpsStatus(''),4000)
       return
     }
 
