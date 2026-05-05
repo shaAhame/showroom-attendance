@@ -246,13 +246,31 @@ export default function Home() {
     const [emps, recs] = await Promise.all([fbGetEmployees(), fbGetTodayRecords(allowedRoom)])
     // Employees: filter by role
     const visibleEmps = session.role==='employee'
-      ? emps.filter(e=>e.empId===session.empId) // employee sees only themselves
+      ? emps.filter(e=>e.empId===session.empId)
       : session.role==='manager'
-        ? emps.filter(e=>e.showroom===session.showroom) // manager sees their showroom
-        : emps // admin sees all
+        ? emps.filter(e=>e.showroom===session.showroom)
+        : emps
     setEmps(visibleEmps)
     setTodayRecs(recs)
     computeStats(visibleEmps, recs)
+
+    // ── Populate Today's Log from Firebase records ─────────────────────────
+    // Filter records relevant to current user's view
+    const logRecs = session.role==='employee'
+      ? recs.filter(r=>r.empId===session.empId)
+      : recs
+    // Sort newest first and populate log
+    const sorted = [...logRecs].sort((a,b)=>(b.createdAt||0)-(a.createdAt||0))
+    setLog(sorted.map(r=>({
+      id: r.id || r.createdAt,
+      empId: r.empId,
+      empName: r.empName,
+      showroom: r.showroom,
+      type: r.type,
+      time: r.time,
+      reason: r.reason,
+      duration: r.duration,
+    })))
   }
 
   function computeStats(emps, recs) {
