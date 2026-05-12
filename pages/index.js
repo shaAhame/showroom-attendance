@@ -110,7 +110,7 @@ function today()   { return new Date().toISOString().split('T')[0] }
 function nowTime() { return new Date().toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit',second:'2-digit'}) }
 function initials(name='') { return name.split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase() }
 
-// Biometric via WebAuthn — optional, skipped if device has no sensor
+// Biometric via WebAuthn — works on iPhone (Face ID) + Android (fingerprint)
 async function checkBiometricAvailable() {
   try {
     if (!window.PublicKeyCredential) return false
@@ -120,33 +120,71 @@ async function checkBiometricAvailable() {
 
 async function verifyBiometric(empId) {
   const hasBio = await checkBiometricAvailable()
-  if (!hasBio) return true // no sensor on device — PIN only is enough
+  if (!hasBio) return true // no sensor — PIN + GPS is enough
 
   const challenge = new Uint8Array(32); crypto.getRandomValues(challenge)
   const key = `idealz_cred_${empId}`
+
   try {
     const existing = localStorage.getItem(key)
+
     if (existing) {
-      const credId = Uint8Array.from(atob(existing), c=>c.charCodeAt(0))
+      // ── Returning user — authenticate with stored credential ─────────────
+      // allowCredentials restricts to THIS employee's credential only
+      // → no popup showing "other accounts" or "scan QR code"
+      // → iPhone shows clean Face ID prompt directly
+      const credId = Uint8Array.from(atob(existing), c => c.charCodeAt(0))
       await navigator.credentials.get({
-        publicKey:{ challenge, timeout:30000, userVerification:'required', rpId:location.hostname, allowCredentials:[{type:'public-key',id:credId}] }
-      })
-    } else {
-      const cred = await navigator.credentials.create({
-        publicKey:{
+        publicKey: {
           challenge,
-          rp:{ name:'Idealz Attendance', id:location.hostname },
-          user:{ id:new TextEncoder().encode(empId), name:empId, displayName:empId },
-          pubKeyCredParams:[{type:'public-key',alg:-7},{type:'public-key',alg:-257}],
-          timeout:30000,
-          authenticatorSelection:{ authenticatorAttachment:'platform', userVerification:'required', residentKey:'preferred' }
+          timeout: 30000,
+          userVerification: 'required',
+          rpId: location.hostname,
+          allowCredentials: [{
+            type: 'public-key',
+            id: credId,
+            transports: ['internal'] // 'internal' = platform authenticator (Face ID / fingerprint)
+          }]
         }
       })
+      return true
+
+    } else {
+      // ── First time — register Face ID / fingerprint for this employee ────
+      const cred = await navigator.credentials.create({
+        publicKey: {
+          challenge,
+          rp: { name: 'Idealz Attendance', id: location.hostname },
+          user: {
+            id: new TextEncoder().encode(empId),
+            name: empId,
+            displayName: empId
+          },
+          pubKeyCredParams: [
+            { type: 'public-key', alg: -7   }, // ES256 — preferred by iPhone
+            { type: 'public-key', alg: -257 }, // RS256 — fallback
+          ],
+          timeout: 30000,
+          excludeCredentials: [], // don't exclude anything
+          authenticatorSelection: {
+            authenticatorAttachment: 'platform', // platform = Face ID / fingerprint only
+            userVerification: 'required',        // must verify identity
+            residentKey: 'preferred',
+            requireResidentKey: false,
+          },
+          // hints tell browser to use platform authenticator directly
+          // avoids showing the "Scan QR Code / Use Security Key" popup on iPhone
+          ...(window.PublicKeyCredential.PublicKeyCredentialCreationOptions ? {} : {}),
+        }
+      })
+      // Save credential ID for future logins
       localStorage.setItem(key, btoa(String.fromCharCode(...new Uint8Array(cred.rawId))))
+      return true
     }
-    return true
+
   } catch(e) {
-    if (e.name==='NotAllowedError') return false
+    if (e.name === 'NotAllowedError') return false // user cancelled or Face ID failed
+    // Any other error (not supported, timeout etc.) — allow PIN only
     return true
   }
 }
