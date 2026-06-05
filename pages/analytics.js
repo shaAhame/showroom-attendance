@@ -141,6 +141,30 @@ export default function Analytics() {
   }
 
   // ── KPI compute ────────────────────────────────────────────────────────────
+  function computeWorkingHrsKPI() {
+    const dates = view === 'day'
+      ? [dateStr(curDate)]
+      : view === 'week'
+        ? (() => { const { start } = getWeekRange(curDate); return Array.from({length:7},(_,i)=>{ const d=new Date(start); d.setDate(d.getDate()+i); return dateStr(d) }) })()
+        : (() => { const y=curDate.getFullYear(),m=curDate.getMonth(),days=new Date(y,m+1,0).getDate(); return Array.from({length:days},(_,i)=>`${y}-${String(m+1).padStart(2,'0')}-${String(i+1).padStart(2,'0')}`) })()
+
+    let totalWorked=0, totalTarget=0, empCount=0
+    dates.forEach(d => {
+      const dayRecs = records.filter(r => r.date === d)
+      filteredEmps.forEach(emp => {
+        const s = deriveStats(emp.empId, dayRecs, emp.showroom, emp.staffType||'showroom')
+        if (!s || s.arrive==null || s.workMin==null) return
+        const shift = getShift(emp.showroom, emp.staffType||'showroom')
+        const shiftMin = toMin(shift.end) - toMin(shift.start)
+        totalWorked += s.workMin
+        totalTarget += shiftMin
+        empCount++
+      })
+    })
+    const diff = totalWorked - totalTarget
+    return { totalWorked, totalTarget, diff, empCount }
+  }
+
   function computeKPIs() {
     const dates = view === 'day'
       ? [dateStr(curDate)]
@@ -208,14 +232,28 @@ export default function Analytics() {
                     <td style={S.td}>{s?.earlyExit > 0 ? badge(`-${s.earlyExit}m`,'danger') : '—'}</td>
                     <td style={S.td}>{s?.leaveDur > 0 ? badge(`${s.leaveDur}m`,'info') : '—'}</td>
                     <td style={S.td}>
-                      {s?.workMin != null ? (
-                        <div style={{ display:'flex', alignItems:'center', gap:6 }}>
-                          <div style={{ flex:1, height:6, background:'var(--color-background-secondary)', borderRadius:3, overflow:'hidden' }}>
-                            <div style={{ height:'100%', borderRadius:3, width:`${Math.min(100,Math.round(s.workMin/(s.eMin-s.sMin)*100))}%`, background: s.halfDay ? '#BA7517' : '#1D9E75' }}/>
+                      {s?.workMin != null ? (() => {
+                        const shiftMin = s.eMin - s.sMin
+                        const pct = Math.min(100, Math.round(s.workMin / shiftMin * 100))
+                        const diff = s.workMin - shiftMin
+                        const overtime = diff > 0
+                        const undertime = diff < 0
+                        return (
+                          <div>
+                            <div style={{ display:'flex', alignItems:'center', gap:6, marginBottom:3 }}>
+                              <div style={{ flex:1, height:6, background:'var(--color-background-secondary)', borderRadius:3, overflow:'hidden', minWidth:60 }}>
+                                <div style={{ height:'100%', borderRadius:3, width:`${pct}%`, background: s.halfDay?'#BA7517':overtime?'#7C3AED':'#1D9E75' }}/>
+                              </div>
+                              <span style={{ fontSize:12, fontWeight:600, color: s.halfDay?'#BA7517':overtime?'#7C3AED':'#1D9E75', minWidth:52 }}>{fmtHrs(s.workMin)}</span>
+                            </div>
+                            <div style={{ fontSize:10, color:'var(--color-text-secondary)' }}>
+                              Target: {fmtHrs(shiftMin)}
+                              {overtime && <span style={{ color:'#7C3AED', marginLeft:6 }}>+{fmtHrs(diff)} OT</span>}
+                              {undertime && <span style={{ color:'#D85A30', marginLeft:6 }}>-{fmtHrs(Math.abs(diff))} short</span>}
+                            </div>
                           </div>
-                          <span style={{ fontSize:11, color:'var(--color-text-secondary)', minWidth:48 }}>{fmtHrs(s.workMin)}</span>
-                        </div>
-                      ) : '—'}
+                        )
+                      })() : <span style={{color:'var(--color-text-secondary)',fontSize:11}}>No departure yet</span>}
                     </td>
                   </tr>
                 )
@@ -238,7 +276,12 @@ export default function Analytics() {
           <table style={S.table}>
             <thead><tr>
               <th style={S.th}>Employee</th>
-              {days.map(d => <th key={d} style={S.th}>{d.toLocaleDateString('en-GB',{weekday:'short',day:'numeric'})}</th>)}
+              {days.map(d => (
+                <th key={d} style={{...S.th,minWidth:90}}>
+                  {d.toLocaleDateString('en-GB',{weekday:'short',day:'numeric'})}
+                  <div style={{fontSize:9,color:'var(--color-text-secondary)',fontWeight:400}}>In / Out</div>
+                </th>
+              ))}
               <th style={S.th}>Total hrs</th>
               <th style={S.th}>Late</th>
               <th style={S.th}>Early exits</th>
@@ -257,15 +300,37 @@ export default function Analytics() {
                   <tr key={emp.id} style={S.tr}>
                     <td style={S.td}><span style={{fontWeight:500}}>{emp.name.split(' ')[0]}</span> <span style={{color:'var(--color-text-secondary)',fontSize:12}}>{emp.name.split(' ').slice(1).join(' ')}</span></td>
                     {stats.map((s,i) => (
-                      <td key={i} style={S.td}>
-                        {!s ? <span style={{color:'var(--color-text-secondary)'}}>—</span>
-                          : s.arrive == null ? badge('Abs','danger')
-                          : s.halfDay ? badge('½','warn')
-                          : s.lateBy > 0 ? <span style={{color:'#BA7517',fontSize:12}}>{toStr(s.arrive)}</span>
-                          : <span style={{color:'#1D9E75',fontSize:12}}>{toStr(s.arrive)}</span>}
+                      <td key={i} style={{...S.td,minWidth:90}}>
+                        {!s
+                          ? <span style={{color:'var(--color-text-secondary)',fontSize:11}}>—</span>
+                          : s.arrive == null
+                            ? badge('Abs','danger')
+                            : <div>
+                                <div style={{color: s.lateBy>0?'#BA7517':'#1D9E75', fontSize:11, fontWeight:500}}>
+                                  ↑ {toStr(s.arrive)}
+                                </div>
+                                <div style={{color: s.earlyExit>0?'#D85A30':'#64748b', fontSize:11}}>
+                                  {s.depart != null ? `↓ ${toStr(s.depart)}` : <span style={{color:'#f59e0b'}}>No out</span>}
+                                </div>
+                              </div>
+                        }
                       </td>
                     ))}
-                    <td style={S.td}><strong>{fmtHrs(totalMin)}</strong></td>
+                    <td style={S.td}>
+                      {(() => {
+                        const shift = getShift(emp.showroom, emp.staffType||'showroom')
+                        const weekDays = stats.filter(s=>s).length
+                        const targetMin = (toMin(shift.end) - toMin(shift.start)) * weekDays
+                        const diff = totalMin - targetMin
+                        return (
+                          <div>
+                            <div style={{ fontSize:13, fontWeight:600, color: diff>=0?'#1D9E75':'#D85A30' }}>{fmtHrs(totalMin)}</div>
+                            <div style={{ fontSize:10, color:'var(--color-text-secondary)' }}>Target: {fmtHrs(targetMin)}</div>
+                            {diff!==0 && <div style={{ fontSize:10, color: diff>0?'#7C3AED':'#D85A30' }}>{diff>0?'+':''}{fmtHrs(Math.abs(diff))} {diff>0?'OT':'short'}</div>}
+                          </div>
+                        )
+                      })()}
+                    </td>
                     <td style={S.td}>{lates > 0   ? badge(lates,'warn')   : <span style={{color:'var(--color-text-secondary)'}}>0</span>}</td>
                     <td style={S.td}>{earlyEx > 0 ? badge(earlyEx,'danger') : <span style={{color:'var(--color-text-secondary)'}}>0</span>}</td>
                     <td style={S.td}>{leaves > 0  ? badge(leaves,'info')  : <span style={{color:'var(--color-text-secondary)'}}>0</span>}</td>
@@ -291,17 +356,28 @@ export default function Analytics() {
           <div style={{ overflowX:'auto' }}>
             <table style={S.table}>
               <thead><tr>
-                {['Employee','Showroom','Days in','Absent','Late','Early exits','Half days','Short leaves','Total hrs'].map(h =>
+                {['Employee','Showroom','Days in','Absent','Late arrivals','Early exits','Half days','Short leaves','Total hrs','Avg hrs/day'].map(h =>
                   <th key={h} style={S.th}>{h}</th>
                 )}
               </tr></thead>
               <tbody>
                 {filteredEmps.map(emp => {
                   let daysIn=0, absent=0, late=0, earlyEx=0, halfDs=0, leaves=0, totalMin=0
+                  // Find earliest record date for this employee to avoid counting days before they joined
+                  const empRecords = records.filter(r => r.empId === emp.empId)
+                  const firstRecordDate = empRecords.length > 0
+                    ? empRecords.map(r=>r.date).sort()[0]
+                    : null
+                  const todayStr = new Date().toISOString().split('T')[0]
+
                   for (let d=1; d<=daysInMonth; d++) {
                     const ds = `${y}-${String(m+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`
                     const dow = new Date(ds).getDay()
-                    if (dow===0||dow===6) continue
+                    if (dow===0||dow===6) continue // skip weekends
+                    if (ds > todayStr) continue // skip future dates
+                    // Only count absent if employee had at least one record this month
+                    if (firstRecordDate && ds < firstRecordDate) continue
+                    if (!firstRecordDate) continue // employee has no records — skip
                     const dayRecs = records.filter(r => r.date === ds)
                     const hasAny  = dayRecs.some(r => r.empId === emp.empId)
                     if (!hasAny) { absent++; continue }
@@ -324,7 +400,22 @@ export default function Analytics() {
                       <td style={S.td}>{earlyEx > 0  ? badge(earlyEx,'warn')   : '0'}</td>
                       <td style={S.td}>{halfDs > 0   ? badge(halfDs,'warn')    : '0'}</td>
                       <td style={S.td}>{leaves > 0   ? badge(leaves,'info')    : '0'}</td>
-                      <td style={S.td}><strong>{fmtHrs(totalMin)}</strong></td>
+                      <td style={S.td}>
+                        {(() => {
+                          const shift = getShift(emp.showroom, emp.staffType||'showroom')
+                          const shiftMin = toMin(shift.end) - toMin(shift.start)
+                          const targetMin = shiftMin * daysIn
+                          const diff = totalMin - targetMin
+                          return (
+                            <div>
+                              <div style={{ fontSize:13, fontWeight:600, color: diff>=0?'#1D9E75':'#D85A30' }}>{fmtHrs(totalMin)}</div>
+                              <div style={{ fontSize:10, color:'var(--color-text-secondary)' }}>Target: {fmtHrs(targetMin)}</div>
+                              {daysIn>0 && diff!==0 && <div style={{ fontSize:10, color: diff>0?'#7C3AED':'#D85A30' }}>{diff>0?'+':''}{fmtHrs(Math.abs(diff))} {diff>0?'OT':'short'}</div>}
+                            </div>
+                          )
+                        })()}
+                      </td>
+                      <td style={S.td}><span style={{color:'var(--color-text-secondary)'}}>{daysIn>0 ? fmtHrs(Math.round(totalMin/daysIn)) : '—'}</span></td>
                     </tr>
                   )
                 })}
@@ -423,12 +514,22 @@ export default function Analytics() {
           {/* KPIs */}
           <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(110px,1fr))', gap:10, marginBottom:16 }}>
             {[
-              { l:'Present',     v: kpis.present  ?? '—', c:'#1D9E75' },
+              { l:'Present',      v: kpis.present  ?? '—', c:'#1D9E75' },
               { l:'Late arrivals',v: kpis.late     ?? '—', c: kpis.late > 0 ? '#BA7517' : '#1D9E75' },
-              { l:'Early exits', v: kpis.earlyEx  ?? '—', c: kpis.earlyEx > 0 ? '#D85A30' : '#1D9E75' },
-              { l:'Short leaves',v: kpis.leaves   ?? '—', c:'#185FA5' },
-              { l:'Half days',   v: kpis.halfDays ?? '—', c: kpis.halfDays > 0 ? '#BA7517' : '#1D9E75' },
-              { l:'Avg hrs/day', v: fmtHrs(kpis.avgHrs), c:'var(--color-text-primary)' },
+              { l:'Early exits',  v: kpis.earlyEx  ?? '—', c: kpis.earlyEx > 0 ? '#D85A30' : '#1D9E75' },
+              { l:'Short leaves', v: kpis.leaves   ?? '—', c:'#185FA5' },
+              { l:'Half days',    v: kpis.halfDays ?? '—', c: kpis.halfDays > 0 ? '#BA7517' : '#1D9E75' },
+              { l:'Avg hrs/day',  v: fmtHrs(kpis.avgHrs), c:'var(--color-text-primary)' },
+              ...(() => {
+                const wh = computeWorkingHrsKPI()
+                const diff = wh.diff
+                return [
+                  { l:'Total hrs worked', v: fmtHrs(wh.totalWorked), c:'#185FA5' },
+                  { l: diff>=0 ? 'Overtime' : 'Short hrs',
+                    v: diff!==0 ? (diff>0?'+':'-')+fmtHrs(Math.abs(diff)) : '0',
+                    c: diff>0 ? '#7C3AED' : diff<0 ? '#D85A30' : '#1D9E75' },
+                ]
+              })(),
             ].map(k => (
               <div key={k.l} style={{ background:'var(--color-background-secondary)', borderRadius:8, padding:'12px 14px' }}>
                 <div style={{ fontSize:11, color:'var(--color-text-secondary)', marginBottom:4, textTransform:'uppercase', letterSpacing:'.04em' }}>{k.l}</div>
