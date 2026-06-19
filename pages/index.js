@@ -220,17 +220,31 @@ export default function Home() {
     const emp=employees.find(e=>e.id===eid)||employees[0]
     if(!emp) return showToast('Employee not found.','error')
 
-    // Check Firebase directly for duplicate
+    // Check Firebase directly for duplicate + enforce arrive before depart
     try {
-      const dupCheck=await getDocs(query(collection(db,'records'),where('empId','==',emp.empId),where('date','==',today()),where('type','==',type)))
-      if(!dupCheck.empty){
-        const existingTime=dupCheck.docs[0].data().time
+      const todaySnap=await getDocs(query(collection(db,'records'),where('empId','==',emp.empId),where('date','==',today())))
+      const todayEmpRecs=todaySnap.docs.map(d=>d.data())
+
+      // Block duplicate
+      const alreadyDone=todayEmpRecs.find(r=>r.type===type)
+      if(alreadyDone){
         const label=type==='arrive'?'Arrival':'Departure'
-        return showToast(`❌ ${emp.name} already recorded ${label} today at ${existingTime}`,'error')
+        return showToast(`❌ ${emp.name} already recorded ${label} today at ${alreadyDone.time}`,'error')
+      }
+
+      // Must arrive before depart
+      if(type==='depart'){
+        const hasArrived=todayEmpRecs.find(r=>r.type==='arrive')
+        if(!hasArrived) return showToast(`❌ ${emp.name} has not arrived yet. Please check in first before departing.`,'error')
       }
     } catch(err) {
+      // Fallback to local state check
       const alreadyDone=todayRecs.find(r=>r.empId===emp.empId&&r.type===type)
       if(alreadyDone) return showToast(`❌ ${emp.name} already recorded ${type==='arrive'?'Arrival':'Departure'} today at ${alreadyDone.time}`,'error')
+      if(type==='depart'){
+        const hasArrived=todayRecs.find(r=>r.empId===emp.empId&&r.type==='arrive')
+        if(!hasArrived) return showToast(`❌ ${emp.name} has not arrived yet. Please check in first.`,'error')
+      }
     }
 
     setGpsStatus('checking')
