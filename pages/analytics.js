@@ -409,8 +409,8 @@ export default function Analytics() {
                     const empRecords = records.filter(r => r.empId === emp.empId)
                     if (empRecords.length === 0) return null
                     // Pre-calculate stats for sorting
-                    const firstDate = empRecords.map(r=>r.date).sort()[0]
-                    const cDays = firstDate ? validWorkDays.filter(d=>d>=firstDate) : []
+                    // Same days for all — from day 1 of month
+                    const cDays = validWorkDays
                     let lateCount=0, absentCount=0, daysInCount=0
                     cDays.forEach(ds=>{
                       const dayRecs = records.filter(r=>r.date===ds)
@@ -437,16 +437,8 @@ export default function Analytics() {
 
                   let daysIn=0, absent=0, late=0, earlyEx=0, halfDs=0, leaves=0, totalMin=0
 
-                  // Find first record date for this employee this month
-                  const empMonthRecords = empRecords.filter(r => r.date >= validWorkDays[0] && r.date <= (validWorkDays[validWorkDays.length-1]||todayStr))
-                  const firstRecordDate = empMonthRecords.length > 0
-                    ? empMonthRecords.map(r=>r.date).sort()[0]
-                    : null
-
-                  // Only count days from when employee first checked in this month
-                  const countableDays = firstRecordDate
-                    ? validWorkDays.filter(d => d >= firstRecordDate)
-                    : []
+                  // All employees count from day 1 of month — same working days for everyone
+                  const countableDays = validWorkDays
 
                   const shift = getShift(emp.showroom, emp.staffType||'showroom')
                   const shiftMin = toMin(shift.end) - toMin(shift.start)
