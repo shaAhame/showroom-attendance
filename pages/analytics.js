@@ -98,6 +98,7 @@ export default function Analytics() {
   const [emps,    setEmps]    = useState([])
   const [records, setRecords] = useState([])
   const [loading, setLoading] = useState(true)
+  const [monthSort, setMonthSort] = useState('late') // 'late' | 'absent' | 'name' | 'days'
   const chartRef = useRef(null)
   const chartInst = useRef(null)
 
@@ -166,18 +167,25 @@ export default function Analytics() {
   }
 
   function computeKPIs() {
-    const dates = view === 'day'
+    const todayKPI = new Date().toISOString().split('T')[0]
+    const dates = (view === 'day'
       ? [dateStr(curDate)]
       : view === 'week'
         ? (() => { const { start } = getWeekRange(curDate); return Array.from({length:7},(_,i)=>{ const d=new Date(start); d.setDate(d.getDate()+i); return dateStr(d) }) })()
         : (() => { const y=curDate.getFullYear(),m=curDate.getMonth(),days=new Date(y,m+1,0).getDate(); return Array.from({length:days},(_,i)=>`${y}-${String(m+1).padStart(2,'0')}-${String(i+1).padStart(2,'0')}`) })()
+    ).filter(d => d <= todayKPI) // Never count future dates — all days count including weekends
 
-    let present=0, absent=0, late=0, earlyEx=0, leaves=0, halfDays=0, totalMin=0, count=0
+    let present=0, late=0, earlyEx=0, leaves=0, halfDays=0, totalMin=0, count=0
     dates.forEach(d => {
       const dayRecs = records.filter(r => r.date === d)
       filteredEmps.forEach(emp => {
+        // Skip employees with no records (avoids counting duplicate admin accounts)
+        if (!records.some(r => r.empId === emp.empId)) return
         const s = deriveStats(emp.empId, dayRecs, emp.showroom, emp.staffType||'showroom')
         if (!s) return
+        // Only count if employee actually arrived
+        const hasArrive = dayRecs.some(r => r.empId === emp.empId && r.type === 'arrive')
+        if (!hasArrive) return
         if (s.arrive != null) { present++; if (s.workMin) { totalMin += s.workMin; count++ } }
         if (s.lateBy > 0) late++
         if (s.earlyExit > 0) earlyEx++
@@ -349,76 +357,155 @@ export default function Analytics() {
   function MonthView() {
     const y = curDate.getFullYear(), m = curDate.getMonth()
     const daysInMonth = new Date(y, m+1, 0).getDate()
+    const todayStr = new Date().toISOString().split('T')[0]
+
+    // Build list of valid days up to today — NO weekend skipping
+    // Every day counts — if employee didn't check in, it's absent
+    const validWorkDays = []
+    for (let d=1; d<=daysInMonth; d++) {
+      const ds = `${y}-${String(m+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`
+      if (ds > todayStr) continue // skip future dates only
+      validWorkDays.push(ds)
+    }
+
     return (
       <>
         <div style={S.section}>
-          <div style={S.secHead}><span style={S.secTitle}>Monthly employee summary</span></div>
+          <div style={S.secHead}>
+            <div style={{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap'}}>
+              <span style={S.secTitle}>Monthly employee summary</span>
+              <span style={{fontSize:11,color:'var(--color-text-secondary)'}}>
+                {validWorkDays.length} days (up to {todayStr})
+              </span>
+            </div>
+            <div style={{display:'flex',gap:6,alignItems:'center',flexWrap:'wrap'}}>
+              <span style={{fontSize:11,color:'var(--color-text-secondary)'}}>Sort by:</span>
+              {[
+                {k:'late',   l:'🟠 Late Arrivals'},
+                {k:'absent', l:'🔴 Absents'},
+                {k:'days',   l:'✅ Days In'},
+                {k:'name',   l:'🔤 Name'},
+              ].map(s=>(
+                <button key={s.k} onClick={()=>setMonthSort(s.k)}
+                  style={{padding:'3px 10px',borderRadius:20,border:'1px solid',fontSize:11,cursor:'pointer',fontWeight:monthSort===s.k?700:400,
+                    borderColor:monthSort===s.k?'#1A6FE8':'var(--color-border-tertiary)',
+                    background:monthSort===s.k?'#E8F1FD':'transparent',
+                    color:monthSort===s.k?'#1A6FE8':'var(--color-text-secondary)'}}>
+                  {s.l}
+                </button>
+              ))}
+            </div>
+          </div>
           <div style={{ overflowX:'auto' }}>
             <table style={S.table}>
               <thead><tr>
-                {['Employee','Showroom','Days in','Absent','Late arrivals','Early exits','Half days','Short leaves','Total hrs','Avg hrs/day'].map(h =>
+                {['Employee','Showroom','Working Days','Days In','Absent','Late Arrivals','Early Exits','Half Days','Short Leaves','Total Hrs','Target Hrs','OT / Short','Avg Hrs/Day'].map(h =>
                   <th key={h} style={S.th}>{h}</th>
                 )}
               </tr></thead>
               <tbody>
-                {filteredEmps.map(emp => {
-                  let daysIn=0, absent=0, late=0, earlyEx=0, halfDs=0, leaves=0, totalMin=0
-                  // Find earliest record date for this employee to avoid counting days before they joined
+                {[...filteredEmps]
+                  .map(emp => {
+                    const empRecords = records.filter(r => r.empId === emp.empId)
+                    if (empRecords.length === 0) return null
+                    // Pre-calculate stats for sorting
+                    const firstDate = empRecords.map(r=>r.date).sort()[0]
+                    const cDays = firstDate ? validWorkDays.filter(d=>d>=firstDate) : []
+                    let lateCount=0, absentCount=0, daysInCount=0
+                    cDays.forEach(ds=>{
+                      const dayRecs = records.filter(r=>r.date===ds)
+                      const empDayRecs = dayRecs.filter(r=>r.empId===emp.empId)
+                      if(empDayRecs.length===0||!empDayRecs.some(r=>r.type==='arrive')){absentCount++;return}
+                      const s = deriveStats(emp.empId, dayRecs, emp.showroom, emp.staffType||'showroom')
+                      if(!s) return
+                      daysInCount++
+                      if(s.lateBy>0) lateCount++
+                    })
+                    return { emp, lateCount, absentCount, daysInCount }
+                  })
+                  .filter(Boolean)
+                  .sort((a,b) => {
+                    if (monthSort==='late')   return b.lateCount - a.lateCount
+                    if (monthSort==='absent') return b.absentCount - a.absentCount
+                    if (monthSort==='days')   return b.daysInCount - a.daysInCount
+                    if (monthSort==='name')   return a.emp.name.localeCompare(b.emp.name)
+                    return b.lateCount - a.lateCount
+                  })
+                  .map(({ emp }) => {
                   const empRecords = records.filter(r => r.empId === emp.empId)
-                  const firstRecordDate = empRecords.length > 0
-                    ? empRecords.map(r=>r.date).sort()[0]
-                    : null
-                  const todayStr = new Date().toISOString().split('T')[0]
+                  if (empRecords.length === 0) return null
 
-                  for (let d=1; d<=daysInMonth; d++) {
-                    const ds = `${y}-${String(m+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`
-                    const dow = new Date(ds).getDay()
-                    if (dow===0||dow===6) continue // skip weekends
-                    if (ds > todayStr) continue // skip future dates
-                    // Only count absent if employee had at least one record this month
-                    if (firstRecordDate && ds < firstRecordDate) continue
-                    if (!firstRecordDate) continue // employee has no records — skip
+                  let daysIn=0, absent=0, late=0, earlyEx=0, halfDs=0, leaves=0, totalMin=0
+
+                  // Find first record date for this employee this month
+                  const empMonthRecords = empRecords.filter(r => r.date >= validWorkDays[0] && r.date <= (validWorkDays[validWorkDays.length-1]||todayStr))
+                  const firstRecordDate = empMonthRecords.length > 0
+                    ? empMonthRecords.map(r=>r.date).sort()[0]
+                    : null
+
+                  // Only count days from when employee first checked in this month
+                  const countableDays = firstRecordDate
+                    ? validWorkDays.filter(d => d >= firstRecordDate)
+                    : []
+
+                  const shift = getShift(emp.showroom, emp.staffType||'showroom')
+                  const shiftMin = toMin(shift.end) - toMin(shift.start)
+                  const targetMin = shiftMin * countableDays.length
+
+                  countableDays.forEach(ds => {
                     const dayRecs = records.filter(r => r.date === ds)
-                    const hasAny  = dayRecs.some(r => r.empId === emp.empId)
-                    if (!hasAny) { absent++; continue }
+                    const empDayRecs = dayRecs.filter(r => r.empId === emp.empId)
+
+                    if (empDayRecs.length === 0) {
+                      absent++
+                      return
+                    }
+
                     const s = deriveStats(emp.empId, dayRecs, emp.showroom, emp.staffType||'showroom')
-                    if (!s) continue
+                    if (!s) { absent++; return }
+
+                    // Only count as present if they have an arrive record
+                    const hasArrive = empDayRecs.some(r => r.type === 'arrive')
+                    if (!hasArrive) { absent++; return }
+
                     daysIn++
-                    if (s.lateBy > 0)   late++
+                    if (s.lateBy > 0)    late++
                     if (s.earlyExit > 0) earlyEx++
                     if (s.halfDay)       halfDs++
                     if (s.leaveDur > 0)  leaves++
                     if (s.workMin)       totalMin += s.workMin
-                  }
+                  })
+
+                  const otMin = totalMin - targetMin
+                  const avgMin = daysIn > 0 ? Math.round(totalMin / daysIn) : 0
+
                   return (
                     <tr key={emp.id} style={S.tr}>
-                      <td style={S.td}>{emp.name}</td>
-                      <td style={S.td}>{badge(emp.showroom.replace('Idealz ',''),'info')} {emp.staffType==='backoffice'&&<span style={{marginLeft:4,fontSize:10,background:'#FAEEDA',color:'#854F0B',padding:'1px 6px',borderRadius:3}}>Back Office</span>}</td>
-                      <td style={S.td}>{daysIn}</td>
-                      <td style={S.td}>{absent > 0   ? badge(absent,'danger')  : '0'}</td>
-                      <td style={S.td}>{late > 0     ? badge(late,'warn')      : '0'}</td>
-                      <td style={S.td}>{earlyEx > 0  ? badge(earlyEx,'warn')   : '0'}</td>
-                      <td style={S.td}>{halfDs > 0   ? badge(halfDs,'warn')    : '0'}</td>
-                      <td style={S.td}>{leaves > 0   ? badge(leaves,'info')    : '0'}</td>
+                      <td style={{...S.td,fontWeight:500}}>{emp.name}</td>
                       <td style={S.td}>
-                        {(() => {
-                          const shift = getShift(emp.showroom, emp.staffType||'showroom')
-                          const shiftMin = toMin(shift.end) - toMin(shift.start)
-                          const targetMin = shiftMin * daysIn
-                          const diff = totalMin - targetMin
-                          return (
-                            <div>
-                              <div style={{ fontSize:13, fontWeight:600, color: diff>=0?'#1D9E75':'#D85A30' }}>{fmtHrs(totalMin)}</div>
-                              <div style={{ fontSize:10, color:'var(--color-text-secondary)' }}>Target: {fmtHrs(targetMin)}</div>
-                              {daysIn>0 && diff!==0 && <div style={{ fontSize:10, color: diff>0?'#7C3AED':'#D85A30' }}>{diff>0?'+':''}{fmtHrs(Math.abs(diff))} {diff>0?'OT':'short'}</div>}
-                            </div>
-                          )
-                        })()}
+                        {badge(emp.showroom.replace('Idealz ',''),'info')}
+                        {emp.staffType==='backoffice'&&<span style={{marginLeft:4,fontSize:10,background:'#FAEEDA',color:'#854F0B',padding:'1px 6px',borderRadius:3}}>Back Office</span>}
                       </td>
-                      <td style={S.td}><span style={{color:'var(--color-text-secondary)'}}>{daysIn>0 ? fmtHrs(Math.round(totalMin/daysIn)) : '—'}</span></td>
+                      <td style={{...S.td,color:'var(--color-text-secondary)'}}>{countableDays.length}</td>
+                      <td style={{...S.td,fontWeight:600,color:'#1D9E75'}}>{daysIn}</td>
+                      <td style={S.td}>{absent > 0   ? badge(absent,'danger')  : <span style={{color:'var(--color-text-secondary)'}}>0</span>}</td>
+                      <td style={S.td}>{late > 0     ? badge(late,'warn')      : <span style={{color:'var(--color-text-secondary)'}}>0</span>}</td>
+                      <td style={S.td}>{earlyEx > 0  ? badge(earlyEx,'warn')   : <span style={{color:'var(--color-text-secondary)'}}>0</span>}</td>
+                      <td style={S.td}>{halfDs > 0   ? badge(halfDs,'warn')    : '0'}</td>
+                      <td style={S.td}>{leaves > 0   ? badge(leaves,'info')    : <span style={{color:'var(--color-text-secondary)'}}>0</span>}</td>
+                      <td style={{...S.td,fontWeight:600,color:totalMin>0?'#1D9E75':'var(--color-text-secondary)'}}>{fmtHrs(totalMin)}</td>
+                      <td style={{...S.td,color:'var(--color-text-secondary)'}}>{fmtHrs(targetMin)}</td>
+                      <td style={S.td}>
+                        {daysIn > 0
+                          ? <span style={{fontWeight:600,fontSize:12,color:otMin>=0?'#7C3AED':'#D85A30'}}>
+                              {otMin>=0?'+':''}{fmtHrs(Math.abs(otMin))}
+                            </span>
+                          : '—'}
+                      </td>
+                      <td style={{...S.td,color:'var(--color-text-secondary)'}}>{daysIn>0 ? fmtHrs(avgMin) : '—'}</td>
                     </tr>
                   )
-                })}
+                })})
               </tbody>
             </table>
           </div>
@@ -427,25 +514,28 @@ export default function Analytics() {
         {/* Per-showroom breakdown */}
         <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(200px,1fr))', gap:12, marginTop:12 }}>
           {SHOWROOMS.map(sh => {
-            const shEmps = emps.filter(e => e.showroom === sh.key)
-            let totalMin=0, lates=0, leaves=0
-            for (let d=1; d<=daysInMonth; d++) {
-              const ds = `${y}-${String(m+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`
+            const shEmps = emps.filter(e => e.showroom === sh.key && records.some(r=>r.empId===e.empId))
+            let totalMin=0, lates=0, leaves=0, present=0
+            validWorkDays.forEach(ds => {
               const dayRecs = records.filter(r => r.date === ds)
               shEmps.forEach(emp => {
                 const s = deriveStats(emp.empId, dayRecs, emp.showroom, emp.staffType||'showroom')
                 if (!s) return
+                const hasArrive = dayRecs.some(r=>r.empId===emp.empId&&r.type==='arrive')
+                if (!hasArrive) return
+                present++
                 if (s.workMin) totalMin += s.workMin
                 if (s.lateBy > 0) lates++
                 if (s.leaveDur > 0) leaves++
               })
-            }
+            })
             return (
               <div key={sh.key} style={{ ...S.section, padding:16 }}>
-                <div style={{ fontSize:13, fontWeight:500, marginBottom:10 }}>{sh.icon} {sh.key}</div>
+                <div style={{ fontSize:13, fontWeight:600, marginBottom:10, color:'var(--color-text-primary)' }}>{sh.icon} {sh.key}</div>
                 <div style={{ display:'flex', flexDirection:'column', gap:6 }}>
-                  <div style={S.statRow}><span style={{color:'var(--color-text-secondary)',fontSize:12}}>Staff</span><span style={{fontWeight:500}}>{shEmps.length}</span></div>
-                  <div style={S.statRow}><span style={{color:'var(--color-text-secondary)',fontSize:12}}>Total hrs</span><span style={{fontWeight:500}}>{fmtHrs(totalMin)}</span></div>
+                  <div style={S.statRow}><span style={{color:'var(--color-text-secondary)',fontSize:12}}>Staff (active)</span><span style={{fontWeight:500}}>{shEmps.length}</span></div>
+                  <div style={S.statRow}><span style={{color:'var(--color-text-secondary)',fontSize:12}}>Total check-ins</span><span style={{fontWeight:500,color:'#1D9E75'}}>{present}</span></div>
+                  <div style={S.statRow}><span style={{color:'var(--color-text-secondary)',fontSize:12}}>Total hrs</span><span style={{fontWeight:600,color:'#185FA5'}}>{fmtHrs(totalMin)}</span></div>
                   <div style={S.statRow}><span style={{color:'var(--color-text-secondary)',fontSize:12}}>Late incidents</span><span style={{fontWeight:500,color:'#BA7517'}}>{lates}</span></div>
                   <div style={S.statRow}><span style={{color:'var(--color-text-secondary)',fontSize:12}}>Short leaves</span><span style={{fontWeight:500,color:'#185FA5'}}>{leaves}</span></div>
                 </div>
