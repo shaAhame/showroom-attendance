@@ -399,7 +399,7 @@ export default function Analytics() {
           <div style={{ overflowX:'auto' }}>
             <table style={S.table}>
               <thead><tr>
-                {['Employee','Showroom','Working Days','Days In','Absent','Late Arrivals','Early Exits','Half Days','Short Leaves','Total Hrs','Target Hrs','OT / Short','Avg Hrs/Day'].map(h =>
+                {['Employee','Showroom','Working Days','Days In','Absent','Late Arrivals','Early Exits','Half Days','Short Leaves','Total Hrs'].map(h =>
                   <th key={h} style={S.th}>{h}</th>
                 )}
               </tr></thead>
@@ -494,15 +494,6 @@ export default function Analytics() {
                       <td style={S.td}>{halfDs > 0   ? badge(halfDs,'warn')    : '0'}</td>
                       <td style={S.td}>{leaves > 0   ? badge(leaves,'info')    : <span style={{color:'var(--color-text-secondary)'}}>0</span>}</td>
                       <td style={{...S.td,fontWeight:600,color:totalMin>0?'#1D9E75':'var(--color-text-secondary)'}}>{fmtHrs(totalMin)}</td>
-                      <td style={{...S.td,color:'var(--color-text-secondary)'}}>{fmtHrs(targetMin)}</td>
-                      <td style={S.td}>
-                        {daysIn > 0
-                          ? <span style={{fontWeight:600,fontSize:12,color:otMin>=0?'#7C3AED':'#D85A30'}}>
-                              {otMin>=0?'+':''}{fmtHrs(Math.abs(otMin))}
-                            </span>
-                          : '—'}
-                      </td>
-                      <td style={{...S.td,color:'var(--color-text-secondary)'}}>{daysIn>0 ? fmtHrs(avgMin) : '—'}</td>
                     </tr>
                   )
                 })})
