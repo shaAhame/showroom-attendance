@@ -149,6 +149,7 @@ export default function Home() {
   const [archivePeriod, setArchivePeriod] = useState('1')
   const [archiveCount, setArchiveCount] = useState(0)
   const [archiveLoading, setArchiveLoading] = useState(false)
+  const [actionLoading, setActionLoading] = useState(false) // prevents double tap
 
   useEffect(()=>{
     setMounted(true)
@@ -214,6 +215,17 @@ export default function Home() {
   const empForRoom=selRoom?employees.filter(e=>e.showroom===selRoom):employees
 
   async function doAction(type,empOverrideId=null) {
+    // Prevent double tap — if already processing, ignore
+    if (actionLoading) return showToast('⏳ Please wait…','info')
+    setActionLoading(true)
+    try {
+      await _doAction(type, empOverrideId)
+    } finally {
+      setActionLoading(false)
+    }
+  }
+
+  async function _doAction(type,empOverrideId=null) {
     const eid=empOverrideId||(session?.role==='employee'?employees[0]?.id:null)
     if(!eid&&session?.role!=='employee') return showToast('Select an employee.','error')
     if(!selRoom) return showToast('Select a showroom first.','error')
@@ -642,9 +654,15 @@ export default function Home() {
                 </div>
               </div>
             )}
-            <button className="fp-btn" style={{...S.btn,background:'linear-gradient(135deg,#43e97b,#38f9d7)',color:'#0a0a0f',marginBottom:10,opacity:selRoom?1:0.5}} onClick={()=>{const eid=session.role==='employee'?employees[0]?.id:leaveEmp;doAction('arrive',eid)}}>👤 Face ID — Arrive</button>
-            <button className="fp-btn" style={{...S.btn,background:'linear-gradient(135deg,#ff6584,#ff9a4a)',color:'#0a0a0f',marginBottom:10,opacity:selRoom?1:0.5}} onClick={()=>{const eid=session.role==='employee'?employees[0]?.id:leaveEmp;doAction('depart',eid)}}>👤 Face ID — Depart</button>
-            <button className="fp-btn" style={{...S.btn,background:'linear-gradient(135deg,#f7c948,#ff9a4a)',color:'#0a0a0f',marginBottom:10,opacity:selRoom?1:0.5}} onClick={()=>{if(!selRoom)return showToast('Select a showroom first.','error');setLeaveM(true)}}>🕐 Short Leave</button>
+            <button className="fp-btn" disabled={actionLoading} style={{...S.btn,background:'linear-gradient(135deg,#43e97b,#38f9d7)',color:'#0a0a0f',marginBottom:10,opacity:selRoom&&!actionLoading?1:0.5}} onClick={()=>{const eid=session.role==='employee'?employees[0]?.id:leaveEmp;doAction('arrive',eid)}}>
+              {actionLoading?'⏳ Processing…':'👤 Face ID — Arrive'}
+            </button>
+            <button className="fp-btn" disabled={actionLoading} style={{...S.btn,background:'linear-gradient(135deg,#ff6584,#ff9a4a)',color:'#0a0a0f',marginBottom:10,opacity:selRoom&&!actionLoading?1:0.5}} onClick={()=>{const eid=session.role==='employee'?employees[0]?.id:leaveEmp;doAction('depart',eid)}}>
+              {actionLoading?'⏳ Processing…':'👤 Face ID — Depart'}
+            </button>
+            <button className="fp-btn" disabled={actionLoading} style={{...S.btn,background:'linear-gradient(135deg,#f7c948,#ff9a4a)',color:'#0a0a0f',marginBottom:10,opacity:selRoom&&!actionLoading?1:0.5}} onClick={()=>{if(!selRoom)return showToast('Select a showroom first.','error');setLeaveM(true)}}>
+              🕐 Short Leave
+            </button>
             {onLeaveEmps.length>0&&(session.role==='employee'?onLeaveEmps.find(e=>e.empId===session.empId):true)&&(
               <button className="fp-btn" style={{...S.btn,background:'linear-gradient(135deg,#6c63ff,#a78bfa)',color:'#fff',opacity:selRoom?1:0.5}} onClick={()=>{if(!selRoom)return showToast('Select a showroom first.','error');setReturnM(true)}}>🔙 Return from Leave</button>
             )}
