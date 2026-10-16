@@ -354,6 +354,10 @@ export default function Home() {
   const [detectFailed, setDetectFailed] = useState(false)
   const [awayFrom, setAwayFrom] = useState(null) // {room,distance} when not at any branch
   const [atBranch, setAtBranch] = useState(null) // {room,distance} when inside one
+  // Firebase has finished signing in. Every Firestore read waits for this:
+  // the rules refuse anything sent before it, and nothing used to retry.
+  const [authReady, setAuthReady] = useState(false)
+  const [loadErr, setLoadErr]     = useState(null) // message when the data could not be read
 
   useEffect(()=>{
     setMounted(true)
@@ -364,7 +368,10 @@ export default function Home() {
     // rules. Send them to sign in again rather than letting the page load and
     // fail silently when they try to check out.
     ensureAuth().then(user=>{
-      if(!user){ clearSession(); router.replace('/login') }
+      if(!user){ clearSession(); router.replace('/login'); return }
+      // Only now may anything be read. Signing in from the saved token takes a
+      // moment, and a read sent during that moment is refused outright.
+      setAuthReady(true)
     })
     setSession(s)
     if(s.role==='manager') setSelRoom(s.showroom)
@@ -412,7 +419,10 @@ export default function Home() {
     },1000); return()=>clearInterval(t)
   },[])
 
-  useEffect(()=>{ if(!session) return; loadAll() },[session])
+  // Waits for authReady, not just for session. Before, this fired the instant
+  // the session was read from localStorage — while Firebase was still signing
+  // in — so the rules refused every read and the page stayed blank for good.
+  useEffect(()=>{ if(!session||!authReady) return; loadAll() },[session,authReady])
 
   // Default the personal view to this month so it opens with something useful
   useEffect(()=>{
@@ -421,7 +431,7 @@ export default function Home() {
     setMyFrom(`${isoDay(n).slice(0,7)}-01`); setMyTo(isoDay(n))
   },[session])
 
-  useEffect(()=>{ if(session&&tab==='mine'&&myFrom) loadMine() },[tab,myFrom,myTo])
+  useEffect(()=>{ if(session&&authReady&&tab==='mine'&&myFrom) loadMine() },[tab,myFrom,myTo,authReady])
 
   // Only this person's records. The rules allow exactly this query and no
   // wider one, so asking for anything else would be refused outright.
@@ -463,17 +473,40 @@ export default function Home() {
                           setMyFrom(isoDay(d)); setMyTo(isoDay(end)) }
     if(k==='last30')    { setMyFrom(back(29)); setMyTo(t) }
   }
-  useEffect(()=>{ if(session&&tab==='report') loadReports() },[tab,fFrom,fTo])
+  useEffect(()=>{ if(session&&authReady&&tab==='report') loadReports() },[tab,fFrom,fTo,authReady])
 
   async function loadAll() {
-    const [emps,recs]=await Promise.all([fbGetEmployees(),fbGetTodayRecords(session)])
-    const visibleEmps=session.role==='employee'?emps.filter(e=>e.empId===session.empId):session.role==='manager'?emps.filter(e=>e.showroom===session.showroom):emps
-    setEmps(visibleEmps)
-    setTodayRecs(recs)
-    computeStats(visibleEmps,recs)
-    const logRecs=session.role==='employee'?recs.filter(r=>r.empId===session.empId):recs
-    const sorted=[...logRecs].sort((a,b)=>(b.createdAt||0)-(a.createdAt||0))
-    setLog(sorted.map(r=>({id:r.id||r.createdAt,empId:r.empId,empName:r.empName,showroom:r.showroom,type:r.type,time:r.time,reason:r.reason,duration:r.duration})))
+    // A failure here used to be invisible: fbGetEmployees threw, the whole
+    // Promise.all rejected, and nothing was ever set. The page then showed a
+    // signed-in shell with no staff list, no log and no stats — and the check
+    // in buttons said "Could not find your employee record", which was wrong.
+    setLoadErr(null)
+    try {
+      const [emps,recs]=await Promise.all([fbGetEmployees(),fbGetTodayRecords(session)])
+      const visibleEmps=session.role==='employee'?emps.filter(e=>e.empId===session.empId):session.role==='manager'?emps.filter(e=>e.showroom===session.showroom):emps
+      setEmps(visibleEmps)
+      setTodayRecs(recs)
+      computeStats(visibleEmps,recs)
+      const logRecs=session.role==='employee'?recs.filter(r=>r.empId===session.empId):recs
+      const sorted=[...logRecs].sort((a,b)=>(b.createdAt||0)-(a.createdAt||0))
+      setLog(sorted.map(r=>({id:r.id||r.createdAt,empId:r.empId,empName:r.empName,showroom:r.showroom,type:r.type,time:r.time,reason:r.reason,duration:r.duration})))
+    } catch (err) {
+      console.error('[loadAll] could not read staff or records:', err?.code || err)
+      setLoadErr(err?.code==='permission-denied'
+        ? 'Your sign in expired while the page was open.'
+        : 'Could not reach the database.')
+    }
+  }
+
+  // The Retry button. Checks the sign in first, because retrying the read
+  // alone would loop forever if the Firebase session really has gone. If it
+  // has, this sends them to sign in once instead of leaving them stuck.
+  async function retryLoad() {
+    setLoadErr(null)
+    const user = await ensureAuth()
+    if (!user) { clearSession(); await signOutEverywhere(); router.replace('/login'); return }
+    setAuthReady(true)
+    await loadAll()
   }
 
   function computeStats(emps,recs) {
@@ -510,6 +543,17 @@ export default function Home() {
   // themselves. Managers and admins are staff too, so this works for them.
   const me = employees.find(e=>e.empId===session?.empId) || null
 
+  // Why `me` is empty decides what to tell them. An empty staff list means the
+  // read failed and a retry fixes it. A loaded list that genuinely lacks them
+  // is a data problem only an admin can fix. The old message claimed the
+  // second in both cases, which sent people hunting for a missing record that
+  // was never missing.
+  function meProblem() {
+    if (loadErr) return `${loadErr} Tap Retry, then try again.`
+    if (!authReady || !employees.length) return 'Your details are still loading — wait a moment and try again.'
+    return 'Your employee record is missing from the staff list. Contact your Admin.'
+  }
+
   async function doAction(type,empOverrideId=null) {
     // Prevent double tap — if already processing, ignore
     if (actionLoading) return showToast('⏳ Please wait…','info')
@@ -527,7 +571,7 @@ export default function Home() {
     // stale dropdown selection turning into a departure for someone who
     // never touched the app.
     const emp=me
-    if(!emp) return showToast('Could not find your employee record. Reload the page.','error')
+    if(!emp) return showToast(meProblem(),'error')
 
     // Check Firebase directly for duplicate + enforce arrive before depart
     try {
@@ -597,7 +641,7 @@ export default function Home() {
   async function submitLeave() {
     if(!selRoom) return showToast('Select a showroom first.','error')
     const emp=me
-    if(!emp) return showToast('Could not find your employee record. Reload the page.','error')
+    if(!emp) return showToast(meProblem(),'error')
     setGpsStatus('checking'); showToast('📍 Checking your location…','info')
     try {
       const pos=await getCurrentPosition()
@@ -630,7 +674,7 @@ export default function Home() {
   async function submitReturn() {
     if(!selRoom) return showToast('Select a showroom first.','error')
     const emp=me
-    if(!emp) return showToast('Could not find your employee record. Reload the page.','error')
+    if(!emp) return showToast(meProblem(),'error')
     setGpsStatus('checking'); showToast('📍 Checking your location…','info')
     try {
       const pos=await getCurrentPosition()
@@ -1001,6 +1045,18 @@ export default function Home() {
 
       <div style={{background:'#e8f1fd',borderBottom:'1px solid #bfdbfe',padding:'8px 24px',fontSize:'0.76rem',color:'#1456b8',textAlign:'center',fontWeight:500}}>👋 Welcome, {session.name} · You check in and out for yourself only</div>
       {session.role==='manager'&&<div style={{background:'#f0f9ff',borderBottom:'1px solid #bae6fd',padding:'8px 24px',fontSize:'0.76rem',color:'#0369a1',textAlign:'center',fontWeight:500}}>👔 Manager · reports for {dn(session.showroom)}</div>}
+
+      {/* A failed read is now visible and recoverable without closing the app.
+          This is the banner that replaces a blank page nobody could explain. */}
+      {loadErr&&(
+        <div style={{background:'#FAECE7',borderBottom:'1px solid #F0C9BB',padding:'10px 18px',fontSize:'0.78rem',
+                     color:'#993C1D',display:'flex',alignItems:'center',justifyContent:'center',gap:10,flexWrap:'wrap'}}>
+          <span>⚠️ {loadErr} Your attendance was not loaded.</span>
+          <button onClick={retryLoad}
+            style={{background:'#993C1D',color:'#fff',border:'none',borderRadius:7,padding:'5px 14px',
+                    fontSize:'0.76rem',fontWeight:600,cursor:'pointer'}}>Retry</button>
+        </div>
+      )}
 
       {tab==='checkin'&&<div className="page-content" style={S.page}>
         <div className="page-h1" style={S.h1}>{session.role==='employee'?`Hi, ${session.name.split(' ')[0]}! 👋`:'Check In / Out'}</div>
